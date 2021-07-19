@@ -9,11 +9,19 @@
 
 void polyOscSender::setup(){
     addParameter(input.set("Input", {ofxFatLine()}));
-    addParameter(host.set("Host", "localhost"));
+    addParameter(host.set("Host", "192.168.1.101"), ofxOceanodeParameterFlags_DisableSavePreset);
     addParameter(port.set("Port", "34254"));
     
     addParameter(kpps.set("Kpps", 30000, 10000, 90000));
     osc.setup(host, ofToInt(port));
+	
+	listeners.push(host.newListener([this](string &s){
+		 osc.setup(host, ofToInt(port));
+	}));
+	
+	listeners.push(port.newListener([this](string &s){
+		 osc.setup(host, ofToInt(port));
+	}));
     
     listeners.push(kpps.newListener([this](int &i){
         ofxOscMessage m;
