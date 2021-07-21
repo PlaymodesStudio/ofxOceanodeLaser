@@ -8,7 +8,10 @@
 #include "polyOscSender.h"
 
 void polyOscSender::setup(){
-    addParameter(input.set("Input", {ofxFatLine()}));
+	inputs.resize(4);
+	for(int i = 0; i < inputs.size(); i++){
+		addParameter(inputs[i].set("In " + ofToString(i), {}));
+	}
     addParameter(host.set("Host", "192.168.1.101"), ofxOceanodeParameterFlags_DisableSavePreset);
     addParameter(port.set("Port", "34254"));
     
@@ -30,28 +33,46 @@ void polyOscSender::setup(){
         osc.sendMessage(m);
     }));
 	
-	listeners.push(input.newListener([this](vector<ofxFatLine> &vf){
-		ofxOscMessage m;
-		m.setAddress("/Laser/0");
-		for(auto &fat : vf){
+//	listeners.push(input.newListener([this](vector<ofxFatLine> &vf){
+//		ofxOscMessage m;
+//		m.setAddress("/Laser/0");
+//		for(auto &fat : vf){
+//			for(int i = 0; i < fat.size(); i++){
+//				m.addFloatArg(fat.getVertices()[i].x / 800.0f);
+//				m.addFloatArg(fat.getVertices()[i].y / 800.0f);
+//				const ofFloatColor c = fat.getColors()[i];
+//				m.addFloatArg(c.r);
+//				m.addFloatArg(c.g);
+//				m.addFloatArg(c.b);
+//			}
+//			m.addFloatArg(-1);
+//		}
+//		osc.sendMessage(m);
+//	}));
+}
+
+void polyOscSender::update(ofEventArgs &a){
+	ofxOscMessage m;
+	m.setAddress("/Laser/0");
+	for(auto &in : inputs){
+		auto fatlinesCopy = in.get();
+		for(auto &fat : fatlinesCopy){
 			for(int i = 0; i < fat.size(); i++){
 				m.addFloatArg(fat.getVertices()[i].x / 800.0f);
 				m.addFloatArg(fat.getVertices()[i].y / 800.0f);
-				m.addFloatArg(0);
 				const ofFloatColor c = fat.getColors()[i];
 				m.addFloatArg(c.r);
 				m.addFloatArg(c.g);
 				m.addFloatArg(c.b);
 			}
-			for(int j = 0; j < 6; j++){
-				m.addFloatArg(-1);
-			}
+			m.addFloatArg(-1);
 		}
+	}
+	if(m.getNumArgs() != 0){
 		osc.sendMessage(m);
-	}));
-}
-
-void polyOscSender::update(ofEventArgs &a){
+	}
+	
+	
 //    ofxOscMessage m;
 //    m.setAddress("/0/Frame");
     

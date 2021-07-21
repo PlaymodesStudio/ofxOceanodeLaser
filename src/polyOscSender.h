@@ -20,7 +20,7 @@ public:
     
     void update(ofEventArgs &a);
 private:
-    ofParameter<vector<ofxFatLine>> input;
+    vector<ofParameter<vector<ofxFatLine>>> inputs;
     ofParameter<string> host;
     ofParameter<string> port;
     
