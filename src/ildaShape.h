@@ -20,6 +20,7 @@ public:
     void setup(){
         addParameter(vInput.set("v In", {ofxFatLine()}));
         addParameterDropdown(renderProfile, "Profile", 0, {"Dafault", "Fast", "High Quality"});
+		addParameter(sendBlackShapes.set("Black", true));
         options = {OFXLASER_PROFILE_FAST, OFXLASER_PROFILE_DEFAULT, OFXLASER_PROFILE_DETAIL};
         listener = vInput.newListener([this](vector<ofxFatLine> &vf){
             for(auto &fat : vf){
@@ -27,11 +28,15 @@ public:
                 for(int i = 0; i < colors.size(); i++){
                     colors[i] = ofColor(fat.getColors()[i]);
                 }
-				if(fat.size() == 1){
-					controller->getManager().drawDot(fat.getVertices()[0], colors[0], 1, options[renderProfile]);
-				}
-				else{
-					controller->getManager().drawPoly((ofPolyline)fat, colors, options[renderProfile]);
+				float colorSum = std::accumulate(colors.begin(), colors.end(), 0.0f, [](float current_sum, ofColor const& value) { return current_sum + value.r + value.g + value.b;});
+				
+				if(sendBlackShapes || colorSum != 0){
+					if(fat.size() == 1){
+						controller->getManager().drawDot(fat.getVertices()[0], colors[0], 1, options[renderProfile]);
+					}
+					else{
+						controller->getManager().drawPoly((ofPolyline)fat, colors, options[renderProfile]);
+					}
 				}
             }
         });
@@ -41,6 +46,7 @@ private:
     shared_ptr<ildaController> controller;
     vector<string> options;
     ofParameter<int> renderProfile;
+	ofParameter<bool> sendBlackShapes;
     ofParameter<ofxFatLine> input;
     ofParameter<vector<ofxFatLine>> vInput;
 	
