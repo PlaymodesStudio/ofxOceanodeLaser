@@ -23,7 +23,8 @@ public:
         projector = controller->addLaser(dac);
         
 		ofxLaser::DacAssigner &dacAssigner = controller->getManager().dacAssigner;// getDacList();
-		
+		dacAssigner.updateDacList();
+
 		addParameter(dacSelector.set("Dac Selector", [&dacAssigner, this](){
 			// get the dacs from the dacAssigner
 			 const vector<ofxLaser::DacData>& dacList = dacAssigner.getDacList();

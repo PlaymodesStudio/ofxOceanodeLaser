@@ -17,6 +17,7 @@ public:
     ildaController() : ofxOceanodeBaseController("ILDA"){
         //laser.globalBrightness.set("Master Intensity", 0.1,0,1);
         laser.setCanvasSize(800, 800);
+		laser.globalBrightness = 1;
     };
     ~ildaController(){};
     
