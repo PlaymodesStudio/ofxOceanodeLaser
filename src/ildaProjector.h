@@ -84,21 +84,53 @@ public:
 			}
 		}));
         
-        addParameter(projector->intensity.set("Intensity", 1, 0, 1));
+//        addParameter(projector->intensity.set("Intensity", 1, 0, 1));
+//
+//        addParameter(projector->pps.set("PPS", 30000,1000,90000));
+//        listener = projector->pps.newListener([this](int &f){
+//            projector->ppsChanged(f);
+//        });
+//
+//		addParameter(projector->colourChangeShift.set("Offset", 0,0,6));
+//        addParameter(projector->scannerSettings.moveSpeed.set("Speed", 5,0.1,50));
+//        addParameter(projector->scannerSettings.shapePreBlank.set("Blank b", 1,0,8));
+//        addParameter(projector->scannerSettings.shapePreOn.set("On b", 1,0,8));
+//        addParameter(projector->scannerSettings.shapePostOn.set("On a", 1,0,8));
+//        addParameter(projector->scannerSettings.shapePostBlank.set("Blank a", 1,0,8));
+		addParameter(intensity.set("Intensity", 1, 0, 1));
+		parameterListeners.push(intensity.newListener([this](float &f){
+			projector->intensity = f;
+		}));
 
-        addParameter(projector->pps.set("PPS", 30000,1000,90000));
-        listener = projector->pps.newListener([this](int &f){
-            projector->ppsChanged(f);
-        });
+        addParameter(pps.set("PPS", 30000,1000,90000));
+        parameterListeners.push(pps.newListener([this](int &f){
+            projector->pps = f;
+        }));
 		
-		addParameter(projector->colourChangeShift.set("Offset", 0,0,6));
-        addParameter(projector->scannerSettings.moveSpeed.set("Speed", 5,0.1,50));
-        addParameter(projector->scannerSettings.shapePreBlank.set("Blank b", 1,0,8));
-        addParameter(projector->scannerSettings.shapePreOn.set("On b", 1,0,8));
-        addParameter(projector->scannerSettings.shapePostOn.set("On a", 1,0,8));
-        addParameter(projector->scannerSettings.shapePostBlank.set("Blank a", 1,0,8));
-		
-        //addParameter(projector->scannerSettings.combinedOutput.set("Out v", {0}, {0}, {1}));
+		addParameter(colourChangeShift.set("Offset", 0,0,6));
+		parameterListeners.push(colourChangeShift.newListener([this](float &f){
+			projector->colourChangeShift = f;
+		}));
+        addParameter(moveSpeed.set("Speed", 5,0.1,50));
+		parameterListeners.push(moveSpeed.newListener([this](float &f){
+			projector->scannerSettings.moveSpeed = f;
+		}));
+        addParameter(shapePreBlank.set("Blank b", 1,0,8));
+		parameterListeners.push(shapePreBlank.newListener([this](int &f){
+            projector->scannerSettings.shapePreBlank = f;
+        }));
+        addParameter(shapePreOn.set("On b", 1,0,8));
+		parameterListeners.push(shapePreOn.newListener([this](int &f){
+            projector->scannerSettings.shapePreOn = f;
+        }));
+        addParameter(shapePostOn.set("On a", 1,0,8));
+		parameterListeners.push(shapePostOn.newListener([this](int &f){
+            projector->scannerSettings.shapePostOn = f;
+        }));
+        addParameter(shapePostBlank.set("Blank a", 1,0,8));
+		parameterListeners.push (shapePostBlank.newListener([this](int &f){
+            projector->scannerSettings.shapePostBlank = f;
+        }));
     }
     
 private:
@@ -109,6 +141,15 @@ private:
     
     ofEventListener listener;
 	customGuiRegion dacSelector;
+	ofParameter<float> intensity;
+	ofParameter<int> pps;
+	ofParameter<float> colourChangeShift;
+	ofParameter<float> moveSpeed;
+	ofParameter<int> shapePreBlank;
+	ofParameter<int> shapePostBlank;
+	ofParameter<int> shapePreOn;
+	ofParameter<int> shapePostOn;
+	ofEventListeners parameterListeners;
 };
 
 

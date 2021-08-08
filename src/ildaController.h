@@ -71,10 +71,12 @@ public:
                     ImGui::Checkbox("Smooth home position", (bool *)&projectorRef.smoothHomePosition.get());
                     //            advanced.add(sortShapes.set("Optimise shape draw order", true));
                     ImGui::Checkbox("Optimise shape draw order", (bool *)&projectorRef.sortShapes.get());
+					
+					ImGui::Checkbox("Experimental shape sorting", (bool *)&projectorRef.newShapeSortMethod.get());
 //					ofParameter<bool> newShapeSortMethod;
 //					ofParameter<bool> alwaysClockwise;
                     //            advanced.add(targetFramerate.set("Target framerate (experimental)", 25, 23, 120));
-                    ImGui::SliderInt("Target framerate (experimental)", (int *)&projectorRef.targetFramerate.get(), 23, 120);
+                    ImGui::SliderFloat("Target framerate (experimental)", (float *)&projectorRef.targetFramerate.get(), 23, 120);
                     //            advanced.add(syncToTargetFramerate.set("Sync to Target framerate", false));
                     ImGui::Checkbox("Sync to Target framerate", (bool *)&projectorRef.syncToTargetFramerate.get());
                     //            advanced.add(syncShift.set("Sync shift", 0, -50, 50));
