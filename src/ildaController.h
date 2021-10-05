@@ -189,6 +189,10 @@ public:
 //            
 //            
         }
+
+		if (ImGui::Button("Save Config")) {
+			laser.saveSettings();
+		}
     }
     
     ofxLaser::Laser* addLaser(ofxLaser::DacBase& dac){
@@ -204,6 +208,8 @@ public:
     ofEvent<float> newValue;
 private:
     ofxLaser::Manager laser;
+
+	ofParameter<void> saveConfig;
 };
 
 
