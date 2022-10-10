@@ -12,21 +12,32 @@
 #include "ofxOsc.h"
 #include "ofxFatLine.h"
 
+class ofxOceanodeOSCController;
+
 class polyOscSender : public ofxOceanodeNodeModel{
 public:
-    polyOscSender() : ofxOceanodeNodeModel("Polylines OSC Sender"){};
+    polyOscSender(shared_ptr<ofxOceanodeOSCController> _controller) : ofxOceanodeNodeModel("Polylines OSC Sender"), controller(_controller){};
     
     void setup();
     
     void update(ofEventArgs &a);
+    
+    void loadBeforeConnections(ofJson &json){
+        deserializeParameter(json, numInputs);
+    }
 private:
-    vector<ofParameter<vector<ofxFatLine>>> inputs;
+    shared_ptr<ofxOceanodeOSCController> controller;
+    
+    vector<pair<bool, ofParameter<vector<ofxFatLine>>>> inputs;
     ofParameter<string> host;
     ofParameter<string> port;
     
     ofParameter<int> kpps;
+    ofParameter<int> laserIndex;
+    ofParameter<int> numInputs;
     
     ofEventListeners listeners;
+    ofEventListeners parameterListeners;
     ofxOscSender osc;
 };
 

@@ -19,7 +19,7 @@ namespace ofxOceanodeLaser{
 static void registerModels(ofxOceanode &o, shared_ptr<ildaController> ildaController){
     o.registerModel<ildaProjector>("ILDA", ildaController);
     o.registerModel<ildaShape>("ILDA", ildaController);
-	o.registerModel<polyOscSender>("ILDA");
+	o.registerModel<polyOscSender>("ILDA", o.getController<ofxOceanodeOSCController>());
 //    o.registerModel<oscillatorTexture>("Textures");
 //    o.registerModel<chaoticOscillatorTexture>("Textures");
 //    o.registerModel<imageLoader>("Textures");

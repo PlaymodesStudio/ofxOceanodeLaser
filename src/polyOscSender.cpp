@@ -6,17 +6,56 @@
 //
 
 #include "polyOscSender.h"
+#include "ofxOceanodeOSCController.h"
+
 
 void polyOscSender::setup(){
-	inputs.resize(4);
-	for(int i = 0; i < inputs.size(); i++){
-		addParameter(inputs[i].set("In " + ofToString(i), {}));
-	}
-    addParameter(host.set("Host", "192.168.1.101"), ofxOceanodeParameterFlags_DisableSavePreset);
-    addParameter(port.set("Port", "34254"));
+    string strHost = controller->addSender("Polylines");
+    
+    addInspectorParameter(numInputs.set("Inputs", 4, 1, INT_MAX));
+    addParameter(host.set("Host", strHost), ofxOceanodeParameterFlags_DisableSavePreset);
+    addParameter(port.set("Port", "6666"));
     
     addParameter(kpps.set("Kpps", 30000, 10000, 90000));
+    
+    
+    inputs.resize(4);
+    for(int i = 0; i < inputs.size(); i++){
+        auto &in = inputs[i];
+        addParameter(in.second.set("In " + ofToString(i), {}));
+        parameterListeners.push(in.second.newListener([this, i](vector<ofxFatLine> &vf){
+            inputs[i].first = true;
+        }));
+    }
+    
+    listeners.push(numInputs.newListener([this](int &i){
+        if(inputs.size() != i){
+            int oldSize = inputs.size();
+            bool remove = oldSize > i;
+            inputs.resize(i);
+            
+            if(remove){
+                for(int j = oldSize-1; j >= i; j--){
+                    removeParameter("In " + ofToString(j));
+                    parameterListeners.unsubscribe(j);
+                }
+            }else{
+                for(int j = oldSize; j < i; j++){
+                    auto &in = inputs[j];
+                    addParameter(in.second.set("In " + ofToString(j), {}));
+                    parameterListeners.push(in.second.newListener([this, j](vector<ofxFatLine> &vf){
+                        inputs[j].first = true;
+                    }));
+                }
+            }
+        }
+    }));
+    
     osc.setup(host, ofToInt(port));
+    
+    listeners.push(controller->hostEvents["Polylines"].newListener([this](string &s){
+        host = s;
+    }));
 	
 	listeners.push(host.newListener([this](string &s){
 		 osc.setup(host, ofToInt(port));
@@ -55,55 +94,34 @@ void polyOscSender::update(ofEventArgs &a){
 	ofxOscMessage m;
 	m.setAddress("/Laser/0");
 	for(auto &in : inputs){
-		auto fatlinesCopy = in.get();
-		for(auto &fat : fatlinesCopy){
-			for(int i = 0; i < fat.size(); i++){
-				m.addFloatArg(fat.getVertices()[i].x / 800.0f);
-				m.addFloatArg(fat.getVertices()[i].y / 800.0f);
-				const ofFloatColor c = fat.getColors()[i];
-				m.addFloatArg(c.r);
-				m.addFloatArg(c.g);
-				m.addFloatArg(c.b);
-			}
-			m.addFloatArg(-1);
-		}
+        if(in.first){
+            auto fatlinesCopy = in.second.get();
+            for(auto &fat : fatlinesCopy){
+                for(int i = 0; i < fat.size(); i++){
+                    m.addFloatArg(fat.getVertices()[i].x / 800.0f);
+                    m.addFloatArg(fat.getVertices()[i].y / 800.0f);
+                    const ofFloatColor c = fat.getColors()[i];
+                    m.addFloatArg(c.r);
+                    m.addFloatArg(c.g);
+                    m.addFloatArg(c.b);
+                }
+                m.addFloatArg(-1);
+            }
+        }
+        in.first = false;
 	}
-	if(m.getNumArgs() != 0){
-		osc.sendMessage(m);
-	}
-	
-	
-//    ofxOscMessage m;
-//    m.setAddress("/0/Frame");
-    
-	/*
-	int arraySize = 0;
-    for(auto &fat : input.get()){
-		arraySize += fat.size() + 1; //add one for the shapes splitter [-1]
-	}
-	arraySize--; //Remove the last splitter
-	
-	vector<float> data(arraySize);
-	*/
-//	for(auto &fat : input.get()){
-//		for(int i = 0; i < fat.size(); i++){
-//			m.addFloatArg(fat.getVertices()[i].x);
-//			m.addFloatArg(fat.getVertices()[i].y);
-//			const ofFloatColor c = fat.getColors()[i];
-//			m.addFloatArg(c.r);
-//		}
-		
-		
-//        for(auto &poly : path.getOutline()){
-//            m.addIntArg(poly.size());
-//            for(auto &point : poly.getVertices()){
-//                if(path.getStrokeColor() == ofColor::white){
-//                    m.addStringArg(ofToString(point.x) + "_" + ofToString(point.y));
-//                }else{
-//                    m.addStringArg(ofToString(point.x) + "_" + ofToString(point.y) + "_" + ofToString((float)path.getStrokeColor().r / 255.0) + "_" + ofToString((float)path.getStrokeColor().g / 255.0) + "_" + ofToString((float)path.getStrokeColor().b / 255.0));
-//                }
-//            }
-//        }
-//    }
-//    osc.sendMessage(m);
+	if(m.getNumArgs() == 0){
+        //Draw a Black diagonal to clear the "buffer"
+        m.addFloatArg(0);
+        m.addFloatArg(0);
+        m.addFloatArg(0);
+        m.addFloatArg(0);
+        m.addFloatArg(0);
+        m.addFloatArg(1);
+        m.addFloatArg(1);
+        m.addFloatArg(0);
+        m.addFloatArg(0);
+        m.addFloatArg(0);
+    }
+    osc.sendMessage(m);
 }
