@@ -27,7 +27,7 @@ public:
 				for (auto &fat : vf) {
 					vector<ofColor> colors(fat.getColors().size());
 					for (int i = 0; i < colors.size(); i++) {
-						colors[i] = ofColor(fat.getColors()[i]);
+                        colors[i] = ofColor(fat.getColors()[i] * fat.getColors()[i].a);
 					}
 					float colorSum = std::accumulate(colors.begin(), colors.end(), 0.0f, [](float current_sum, ofColor const& value) { return current_sum + value.r + value.g + value.b; });
 
