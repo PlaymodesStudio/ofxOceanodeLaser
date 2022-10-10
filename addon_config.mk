@@ -66,6 +66,8 @@ common:
 	# when parsing the file system looking for sources exclude this for all or
 	# a specific platform
 	# ADDON_SOURCES_EXCLUDE =
+	ADDON_SOURCES_EXCLUDE = /../ofxLaser/libs/ofxImGui/*
+	ADDLN_SOURCES_EXCLUDE += /../ofxLaser/libs/imgui/*
 
 	# when parsing the file system looking for include paths exclude this for all or
 	# a specific platform
