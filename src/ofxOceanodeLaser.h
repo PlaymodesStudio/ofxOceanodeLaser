@@ -12,6 +12,7 @@
 #include "ildaProjector.h"
 #include "ildaShape.h"
 #include "polyOscSender.h"
+#include "ofxOceanodeOSCController.h"
 
 #include "ofxOceanode.h"
 

@@ -35,6 +35,7 @@ private:
     ofParameter<int> kpps;
     ofParameter<int> laserIndex;
     ofParameter<int> numInputs;
+    ofParameter<int> sendMode;
     
     ofEventListeners listeners;
     ofEventListeners parameterListeners;
