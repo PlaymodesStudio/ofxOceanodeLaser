@@ -205,6 +205,15 @@ public:
         return laser;
     }
     
+    vector<ofxLaser::Point> getAllLaserPoints(){
+        vector<ofxLaser::Point> points;
+        for(auto &l : laser.getLasers()){
+            vector<ofxLaser::Point> newPoints = l->getLastPoints();
+            points.insert(points.end(), newPoints.begin(), newPoints.end());
+        }
+        return points;
+    }
+    
     ofEvent<float> newValue;
 private:
     ofxLaser::Manager laser;
