@@ -42,7 +42,7 @@ public:
 					 for(const ofxLaser::DacData& dacdata : dacList) {
 						 
 						 // get the dac label (usually type + unique ID)
-						 string itemlabel = dacdata.label;
+						 string itemlabel = dacdata.getLabel();
 						 
 						 ImGuiSelectableFlags selectableflags = 0;
 						 
@@ -61,7 +61,7 @@ public:
 							 // TODO : show a warning yes / no if :
 							 //      - we already are connected to a DAC
 							 //      - the chosen DAC is already being used by another laser
-							 dacAssigner.assignToLaser(dacdata.label, *projector);
+							 dacAssigner.assignToLaser(dacdata.getLabel(), *projector);
 						 }
 						 
 						 if(dacdata.assignedLaser != nullptr) {
@@ -136,7 +136,7 @@ public:
 private:
     shared_ptr<ildaController> controller;
     ofxLaser::Laser* projector;
-    ofxLaser::DacEtherdream dac;
+    ofxLaser::DacEtherDream dac;
     std::string ip;
     
     ofEventListener listener;

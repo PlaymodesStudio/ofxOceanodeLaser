@@ -16,8 +16,10 @@ class ildaController : public ofxOceanodeBaseController{
 public:
     ildaController() : ofxOceanodeBaseController("ILDA"){
         //laser.globalBrightness.set("Master Intensity", 0.1,0,1);
-        laser.setCanvasSize(800, 800);
-		laser.globalBrightness = 1;
+//        laser.setCanvasSize(800, 800);
+//		laser.globalBrightness = 1;
+//        laser.resetAllLasersToDefault();
+//        zone = laser.addCanvasZone(0, 0, -1, -1);
     };
     ~ildaController(){};
     
@@ -48,7 +50,7 @@ public:
                 
                 //            gui->add(testPattern.set("Test Pattern", 0,0,numTestPatterns));
                 //            gui->add(resetDac.set("Reset DAC", false));
-                ImGui::SliderInt("Test Pattern", (int *)&projectorRef.testPattern.get(), 0, projectorRef.numTestPatterns);
+//                ImGui::SliderInt("Test Pattern", (int *)&projectorRef.testPattern.get(), 0, projectorRef.numTestPatterns);
                 //ImGui::Checkbox("Reset Dac", (bool *)&projectorRef.resetDac.get());
                 
                 //            projectorparams.add(laserOnWhileMoving.set("Laser on while moving", false));
@@ -208,7 +210,7 @@ public:
     vector<ofxLaser::Point> getAllLaserPoints(){
         vector<ofxLaser::Point> points;
         for(auto &l : laser.getLasers()){
-            vector<ofxLaser::Point> newPoints = l->getLastPoints();
+            vector<ofxLaser::Point> newPoints = l->getLaserPoints();
             points.insert(points.end(), newPoints.begin(), newPoints.end());
         }
         return points;
