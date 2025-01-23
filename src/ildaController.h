@@ -20,6 +20,8 @@ public:
 //		laser.globalBrightness = 1;
 //        laser.resetAllLasersToDefault();
 //        zone = laser.addCanvasZone(0, 0, -1, -1);
+        ofxLaser::ZoneId zoneId2 = laser.createNewBeamZone();
+        laser.addZoneToLaser(zoneId2, 0);
     };
     ~ildaController(){};
     
