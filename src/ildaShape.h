@@ -21,6 +21,7 @@ public:
         addParameter(vInput.set("v In", {ofxFatLine()}));
         addParameterDropdown(renderProfile, "Profile", 0, {"Dafault", "Fast", "High Quality"});
 		addParameter(sendBlackShapes.set("Black", true));
+        addParameter(blackThreshold.set("Black Thr", 0, 0, 1));
         options = {OFXLASER_PROFILE_FAST, OFXLASER_PROFILE_DEFAULT, OFXLASER_PROFILE_DETAIL};
 		listener = vInput.newListener([this](vector<ofxFatLine> &vf) {
 			if (!disable) {
@@ -29,9 +30,9 @@ public:
 					for (int i = 0; i < colors.size(); i++) {
                         colors[i] = ofColor(fat.getColors()[i] * fat.getColors()[i].a);
 					}
-					float colorSum = std::accumulate(colors.begin(), colors.end(), 0.0f, [](float current_sum, ofColor const& value) { return current_sum + value.r + value.g + value.b; });
+                    float colorSum = std::accumulate(colors.begin(), colors.end(), 0.0f, [](float current_sum, ofColor const& value) { return current_sum + std::max(value.r, std::max(value.g, value.b));});
 
-					if (sendBlackShapes || colorSum != 0) {
+                    if (sendBlackShapes || colorSum > (blackThreshold * 255 * fat.size())){
 						if (fat.size() == 1) {
 							controller->getManager().drawDot(fat.getVertices()[0], colors[0], 1, options[renderProfile]);
 						}
@@ -61,6 +62,7 @@ private:
     vector<string> options;
     ofParameter<int> renderProfile;
 	ofParameter<bool> sendBlackShapes;
+    ofParameter<float> blackThreshold;
     ofParameter<ofxFatLine> input;
     ofParameter<vector<ofxFatLine>> vInput;
 	
