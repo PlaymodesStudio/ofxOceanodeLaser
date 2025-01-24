@@ -24,6 +24,9 @@ public:
         
         ofxLaser::ZoneId zoneId2 = laser.createNewBeamZone();
         laser.addZoneToLaser(zoneId2, 0);
+        
+        dacAssigner = &laser.dacAssigner;
+        dacAssigner->updateDacList();
     };
     ~ildaController(){};
     
@@ -39,12 +42,62 @@ public:
         for(int i = 0; i < laser.getNumLasers(); i++){
             auto &projectorRef = laser.getLaser(i);
             if(ImGui::TreeNode(projectorRef.getLabel().c_str())){
-                char * cString = new char[256];
-                strcpy(cString, "192.168.1.50");
-                if (ImGui::InputText("IP", cString, 256, ImGuiInputTextFlags_EnterReturnsTrue)){
-                    //projectorRef.setup(cString);
-                    //Send setup to DAC?
+                const vector<ofxLaser::DacData>& dacList = dacAssigner->getDacList();
+                    
+                if (ImGui::BeginListBox("##listbox", glm::vec2(0, 0))){
+                    
+                    if(dacList.empty()) {
+                        
+                        ImGui::Selectable("No laser controllers found", false, ImGuiSelectableFlags_Disabled );
+                        
+                    } else {
+                        // add a combo box item for every element in the list
+                        for(const ofxLaser::DacData& dacdata : dacList) {
+                            
+                            // get the dac label (usually type + unique ID)
+                            string itemlabel = dacdata.getLabel();
+                            
+                            ImGuiSelectableFlags selectableflags = 0;
+                            
+                            if(!dacdata.available) {
+                                // ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5);
+                                //itemlabel += " - no longer available";
+                                selectableflags|=ImGuiSelectableFlags_Disabled;
+                            } else {
+                                //
+                            }
+                            // if this dac is assigned to a laser, show which laser
+                            //  - this could be done at the other end?
+                            
+                            if (ImGui::Selectable(itemlabel.c_str(), (dacdata.assignedLaser == &projectorRef), selectableflags)) {
+                                // then select dac
+                                // TODO : show a warning yes / no if :
+                                //      - we already are connected to a DAC
+                                //      - the chosen DAC is already being used by another laser
+                                dacAssigner->assignToLaser(dacdata.getLabel(), projectorRef);
+                            }
+                            
+                            if(dacdata.assignedLaser != nullptr) {
+                                ImGui::SameLine(210 - 10);
+                                string label =" > " + dacdata.assignedLaser->getLabel();
+                                ImGui::Text("%s",label.c_str());
+                            }
+                            
+                            //ImGui::PopStyleVar();
+                        }
+                    }
+                    //    if (is_selected)
+                    //       ImGui::SetItemDefaultFocus();   // Set the initial focus when opening the combo (scrolling + for keyboard navigation support in the upcoming navigation branch)
+                    //ImGui::EndCombo();
+                    ImGui::EndListBox();
                 }
+                if(ImGui::Button("Refresh controller list")) {
+                    dacAssigner->updateDacList();
+                    
+                }
+                
+                ImGui::Separator();
+                
                 //            gui->add(armed.set("ARMED", false));
                 //            armed.addListener(this, &ofxLaser::Projector::setArmed);
                 if(ImGui::Checkbox("Armed", (bool *)&projectorRef.armed.get())){
@@ -223,6 +276,7 @@ public:
     ofEvent<float> newValue;
 private:
     ofxLaser::Manager laser;
+    ofxLaser::DacAssigner* dacAssigner;
 
 	ofParameter<void> saveConfig;
 };

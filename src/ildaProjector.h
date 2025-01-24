@@ -22,68 +22,6 @@ public:
         //TODO: restore ip from saved in iController "project save"
         projector = controller->addLaser(dac);
         
-		ofxLaser::DacAssigner &dacAssigner = controller->getManager().dacAssigner;// getDacList();
-		dacAssigner.updateDacList();
-
-		addParameter(dacSelector.set("Dac Selector", [&dacAssigner, this](){
-			// get the dacs from the dacAssigner
-			 const vector<ofxLaser::DacData>& dacList = dacAssigner.getDacList();
-				 
-			 if (ImGui::BeginListBox("##listbox", glm::vec2(200, 30))){
-				 
-				 if(dacList.empty()) {
-				  
-					 ImGui::Selectable("No laser controllers found", false, ImGuiSelectableFlags_Disabled );
-			
-				 } else {
-						 
-						 
-					 // add a combo box item for every element in the list
-					 for(const ofxLaser::DacData& dacdata : dacList) {
-						 
-						 // get the dac label (usually type + unique ID)
-						 string itemlabel = dacdata.getLabel();
-						 
-						 ImGuiSelectableFlags selectableflags = 0;
-						 
-						 if(!dacdata.available) {
-							// ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5);
-							//itemlabel += " - no longer available";
-							 selectableflags|=ImGuiSelectableFlags_Disabled;
-						 } else {
-							//
-						 }
-						 // if this dac is assigned to a laser, show which laser
-						 //  - this could be done at the other end?
-						 
-						 if (ImGui::Selectable(itemlabel.c_str(), (dacdata.assignedLaser == projector), selectableflags)) {
-							 // then select dac
-							 // TODO : show a warning yes / no if :
-							 //      - we already are connected to a DAC
-							 //      - the chosen DAC is already being used by another laser
-							 dacAssigner.assignToLaser(dacdata.getLabel(), *projector);
-						 }
-						 
-						 if(dacdata.assignedLaser != nullptr) {
-							 ImGui::SameLine(210 - 10);
-							 string label =" > " + dacdata.assignedLaser->getLabel();
-							 ImGui::Text("%s",label.c_str());
-						 }
-						 
-						 //ImGui::PopStyleVar();
-					 }
-				 }
-				 //    if (is_selected)
-				 //       ImGui::SetItemDefaultFocus();   // Set the initial focus when opening the combo (scrolling + for keyboard navigation support in the upcoming navigation branch)
-				 //ImGui::EndCombo();
-				 ImGui::EndListBox();
-			 }
-			if(ImGui::Button("Refresh controller list")) {
-				dacAssigner.updateDacList();
-				
-			}
-		}));
-        
 //        addParameter(projector->intensity.set("Intensity", 1, 0, 1));
 //
 //        addParameter(projector->pps.set("PPS", 30000,1000,90000));
