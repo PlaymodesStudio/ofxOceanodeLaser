@@ -23,9 +23,9 @@ public:
     void setup(){
         addParameter(x.set("x", {0}, {0}, {1}));
         addParameter(y.set("y", {0}, {0}, {1}));
-        addParameter(r.set("r", {0}, {0}, {1}));
-        addParameter(g.set("g", {0}, {0}, {1}));
-        addParameter(b.set("b", {0}, {0}, {1}));
+        addParameter(r.set("r", {0}, {0}, {255}));
+        addParameter(g.set("g", {0}, {0}, {255}));
+        addParameter(b.set("b", {0}, {0}, {255}));
     }
     
     void update(ofEventArgs &a){
