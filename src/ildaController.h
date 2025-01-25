@@ -150,6 +150,19 @@ public:
                     ofxLaser::RenderProfile& defaultProfile = projectorRef.getRenderProfile(OFXLASER_PROFILE_DEFAULT);
                     ofxLaser::RenderProfile& detail = projectorRef.getRenderProfile(OFXLASER_PROFILE_DETAIL);
                     
+                    
+                    if(ImGui::TreeNode("Fast")){
+                        //params.add(speed.set("speed",2,1,40));
+                        ImGui::SliderFloat("speed", (float *)&fast.speed.get(), 1, 40);
+                        //params.add(acceleration.set("acceleration",1,0.01,4));
+                        ImGui::SliderFloat("acceleration", (float *)&fast.acceleration.get(), 0.01, 4);
+                        //params.add(cornerThreshold.set("corner threshold",90,0,180));
+                        ImGui::SliderFloat("corner threshold", (float *)&fast.cornerThreshold.get(), 0, 180);
+                        //params.add(dotMaxPoints.set("dot max points", 2, 0, 100));
+                        ImGui::SliderInt("dot max points", (int *)&fast.dotMaxPoints.get(), 0, 100);
+                        
+                        ImGui::TreePop();
+                    }
                     //            renderparams.add(defaultProfile.params);
                     if(ImGui::TreeNode("Default")){
                         //params.add(speed.set("speed",2,1,40));
@@ -160,18 +173,6 @@ public:
                         ImGui::SliderFloat("corner threshold", (float *)&defaultProfile.cornerThreshold.get(), 0, 180);
                         //params.add(dotMaxPoints.set("dot max points", 2, 0, 100));
                         ImGui::SliderInt("dot max points", (int *)&defaultProfile.dotMaxPoints.get(), 0, 100);
-                        
-                        ImGui::TreePop();
-                    }
-                    if(ImGui::TreeNode("Fast")){
-                        //params.add(speed.set("speed",2,1,40));
-                        ImGui::SliderFloat("speed", (float *)&fast.speed.get(), 1, 40);
-                        //params.add(acceleration.set("acceleration",1,0.01,4));
-                        ImGui::SliderFloat("acceleration", (float *)&fast.acceleration.get(), 0.01, 4);
-                        //params.add(cornerThreshold.set("corner threshold",90,0,180));
-                        ImGui::SliderFloat("corner threshold", (float *)&fast.cornerThreshold.get(), 0, 180);
-                        //params.add(dotMaxPoints.set("dot max points", 2, 0, 100));
-                        ImGui::SliderInt("dot max points", (int *)&fast.dotMaxPoints.get(), 0, 100);
                         
                         ImGui::TreePop();
                     }
