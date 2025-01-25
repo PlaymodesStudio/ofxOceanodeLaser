@@ -19,7 +19,7 @@ public:
     
     void setup(){
         addParameter(vInput.set("v In", {ofxFatLine()}));
-        addParameterDropdown(renderProfile, "Profile", 0, {"Dafault", "Fast", "High Quality"});
+        addParameterDropdown(renderProfile, "Profile", 0, {"Fast", "Default", "High Quality"});
 		addParameter(sendBlackShapes.set("Black", true));
         addParameter(blackThreshold.set("Black Thr", 0, 0, 1));
         options = {OFXLASER_PROFILE_FAST, OFXLASER_PROFILE_DEFAULT, OFXLASER_PROFILE_DETAIL};
