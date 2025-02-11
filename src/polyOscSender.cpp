@@ -45,7 +45,10 @@ void polyOscSender::setup(){
                     auto &in = inputs[j];
                     addParameter(in.second.set("In " + ofToString(j), {}));
                     parameterListeners.push(in.second.newListener([this, j](vector<ofxFatLine> &vf){
-                        inputs[j].first = true;
+						if(vf.size()!=0)
+						{
+							inputs[j].first = true;
+						}
                     }));
                 }
             }
