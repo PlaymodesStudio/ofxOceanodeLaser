@@ -27,6 +27,8 @@ public:
         
         dacAssigner = &laser.dacAssigner;
         dacAssigner->updateDacList();
+        
+        freeze = false;
     };
     ~ildaController(){};
     
@@ -36,6 +38,7 @@ public:
     }
     
     void draw(){
+        ImGui::Checkbox("Freeze", &freeze);
         if(ImGui::SliderFloat("Master Intensity", (float*)&laser.globalBrightness.get(), 0.0f, 1.0f)){
             //newValue.notify(f);
         }
@@ -274,12 +277,15 @@ public:
         return points;
     }
     
+    bool isFrozen(){return freeze;};
+    
     ofEvent<float> newValue;
 private:
     ofxLaser::Manager laser;
     ofxLaser::DacAssigner* dacAssigner;
 
 	ofParameter<void> saveConfig;
+    bool freeze;
 };
 
 

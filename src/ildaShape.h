@@ -25,7 +25,14 @@ public:
         options = {OFXLASER_PROFILE_FAST, OFXLASER_PROFILE_DEFAULT, OFXLASER_PROFILE_DETAIL};
 		listener = vInput.newListener([this](vector<ofxFatLine> &vf) {
 			if (!disable) {
-				for (auto &fat : vf) {
+                auto toSendFatline = vf;
+                if(controller->isFrozen()){
+                    toSendFatline = storedInput;
+                }
+                else{
+                    storedInput = vf;
+                }
+				for (auto &fat : toSendFatline) {
 					vector<ofColor> colors(fat.getColors().size());
 					for (int i = 0; i < colors.size(); i++) {
                         colors[i] = ofColor(fat.getColors()[i] * fat.getColors()[i].a);
@@ -69,6 +76,8 @@ private:
 	ofParameter<vector<float>> oscOutput;
     
     ofEventListener listener;
+    
+    vector<ofxFatLine> storedInput;
 
 	bool disable;
 };
