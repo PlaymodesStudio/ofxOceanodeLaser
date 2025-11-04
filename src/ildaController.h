@@ -29,6 +29,27 @@ public:
         dacAssigner->updateDacList();
         
         freeze = false;
+        
+        pointDraggingIndex = -1;
+        ofJson warpPointsJson = ofLoadJson("warpPoints.json");
+        if(!warpPointsJson.empty()){
+            warpPoints.resize(4);
+            warpPoints[0].x = warpPointsJson["p0"]["x"];
+            warpPoints[0].y = warpPointsJson["p0"]["y"];
+            
+            warpPoints[1].x = warpPointsJson["p1"]["x"];
+            warpPoints[1].y = warpPointsJson["p1"]["y"];
+            
+            warpPoints[2].x = warpPointsJson["p2"]["x"];
+            warpPoints[2].y = warpPointsJson["p2"]["y"];
+            
+            warpPoints[3].x = warpPointsJson["p3"]["x"];
+            warpPoints[3].y = warpPointsJson["p3"]["y"];
+            laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
+        }
+        else{
+            warpPoints = {glm::vec2(0, 0), glm::vec2(1, 0), glm::vec2(0, 1), glm::vec2(1, 1)};
+        }
     };
     ~ildaController(){};
     
@@ -241,6 +262,121 @@ public:
                     ImGui::TreePop();
                 }
                 
+                if(ImGui::TreeNode("Warping")){
+//                    auto screenPos = ImGui::GetCursorScreenPos();
+//                    //ImGui::Vec2 size;
+//                    ImVec2 screenSize = ImVec2(100, 100);
+                    
+                    bool pointsUpdated = false;
+                    
+                    float availableWidth = ImGui::GetContentRegionAvail().x;
+                    float squareSize = availableWidth;
+                    
+                    // Iniciem un Child region perquè reservi espai
+                    if(ImGui::BeginChild("WarpCanvas", ImVec2(squareSize, squareSize), true, ImGuiWindowFlags_NoScrollWithMouse)){
+                        
+                        // Coordenades de dibuix absolutes
+                        ImVec2 screenPos = ImGui::GetCursorScreenPos();
+                        ImVec2 screenSize = ImGui::GetContentRegionAvail(); // = squareSize, squareSize
+                        
+                        
+                        if(ImGui::IsWindowHovered()){
+                            glm::vec2 normPos = (ImGui::GetMousePos() - screenPos) / screenSize;
+                            if(normPos.x>1.0) normPos.x = 1.0;
+                            if(normPos.x<0.0) normPos.x = 0.0;
+                            if(normPos.y>1.0) normPos.y = 1.0;
+                            if(normPos.y<0.0) normPos.y = 0.0;
+                            
+                            bool mouseClicked = false;
+                            if(ImGui::IsMouseClicked(0)){
+                                mouseClicked = true;
+                            }
+                            else if(ImGui::IsMouseClicked(1)){
+                                mouseClicked = true;
+                            }
+                            if(mouseClicked){
+                                bool foundPoint = false;
+                                for(int i = warpPoints.size()-1; i >= 0 && !foundPoint ; i--){
+                                    auto point = (warpPoints[i] * screenSize) + screenPos;
+                                    if(glm::distance(glm::vec2(ImGui::GetMousePos()), point) < 10){
+                                        pointDraggingIndex = i;
+                                        foundPoint = true;
+                                    }
+                                }
+                                if(!foundPoint){
+                                    pointDraggingIndex = -1;
+                                }
+                            }
+                            else if(ImGui::IsMouseDragging(0)){
+                                if(pointDraggingIndex != -1){
+                                    if(ImGui::GetIO().KeyAlt){
+                                        warpPoints[pointDraggingIndex] += ImGui::GetIO().MouseDelta / (screenSize * ImVec2(100, 100));
+                                        pointsUpdated = true;
+                                    }else{
+                                        warpPoints[pointDraggingIndex] += ImGui::GetIO().MouseDelta / screenSize;
+                                        pointsUpdated = true;
+                                    }
+                                }
+                            }else if(pointDraggingIndex != -1){
+                                float moveAmt = ImGui::GetIO().KeyAlt ? 0.00001 : 0.001;
+                                if(ImGui::IsKeyDown(ImGuiKey_LeftArrow)){
+                                    warpPoints[pointDraggingIndex] += glm::vec2(-moveAmt, 0);
+                                    pointsUpdated = true;
+                                }else if(ImGui::IsKeyDown(ImGuiKey_RightArrow)){
+                                    warpPoints[pointDraggingIndex] += glm::vec2(moveAmt, 0);
+                                    pointsUpdated = true;
+                                }if(ImGui::IsKeyDown(ImGuiKey_UpArrow)){
+                                    warpPoints[pointDraggingIndex] += glm::vec2(0, -moveAmt);
+                                    pointsUpdated = true;
+                                }else if(ImGui::IsKeyDown(ImGuiKey_DownArrow)){
+                                    warpPoints[pointDraggingIndex] += glm::vec2(0, moveAmt);
+                                    pointsUpdated = true;
+                                }
+                            }
+                            if(ImGui::IsKeyPressed(ImGuiKey_Tab)){
+                                pointDraggingIndex = (pointDraggingIndex + 1) % warpPoints.size();
+                            }
+                            
+                            if(warpPoints[pointDraggingIndex].x>1.0) warpPoints[pointDraggingIndex].x=1.0;
+                            if(warpPoints[pointDraggingIndex].x<0.0) warpPoints[pointDraggingIndex].x=0.0;
+                            if(warpPoints[pointDraggingIndex].y>1.0) warpPoints[pointDraggingIndex].y=1.0;
+                            if(warpPoints[pointDraggingIndex].y<0.0) warpPoints[pointDraggingIndex].y=0.0;
+                        }
+                        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                        vector<float> x_t(warpPoints.size());
+                        vector<float> y_t(warpPoints.size());
+                        for(int i = 0; i < warpPoints.size(); i++){
+                            if(pointDraggingIndex == i) draw_list->AddCircle((warpPoints[i] * screenSize) + screenPos, 10, IM_COL32(255, 255, 0, 255));
+                            else draw_list->AddCircle((warpPoints[i] * screenSize) + screenPos, 10, IM_COL32(255, 128, 0, 255));
+                            string numString = ofToString(i);
+                            draw_list->AddText(ImGui::GetFont(), ImGui::GetFontSize(), (warpPoints[i] * screenSize) + screenPos - glm::vec2(5, 5), IM_COL32(255,255,255,255), numString.c_str(), numString.c_str()+ (i < 10 ? 1 : 2));
+                            x_t[i] = warpPoints[i].x;
+                            y_t[i] = warpPoints[i].y;
+                        }
+                        draw_list->ChannelsMerge();
+                        
+                        if(pointsUpdated){
+//                            vector<glm::vec2> perimeterPoints = laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->getZoneTransform().getPerimeterPoints();
+                                laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
+                        }
+                        
+                        ImGui::EndChild(); // tanca canvas
+                    }
+                    
+                    ImGui::TreePop();
+                }
+                
+                
+                if(ImGui::TreeNode("Distortion")){
+                    auto &zoneQuadTransform =  laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad;
+                    ImGui::SliderFloat2("Shear", (float *)&zoneQuadTransform.shear, -2, 2);
+                    ImGui::SliderFloat2("Keystone", (float *)&zoneQuadTransform.keystone, -2, 2);
+                    ImGui::SliderFloat2("Linearity", (float *)&zoneQuadTransform.linearity, -2, 2);
+                    ImGui::SliderFloat2("Bow", (float *)&zoneQuadTransform.bow, -2, 2);
+                    ImGui::SliderFloat2("Pincushion", (float *)&zoneQuadTransform.pincushion, -2, 2);
+                    ImGui::TreePop();
+                }
+                
                 
                 ImGui::TreePop();
             }
@@ -255,6 +391,20 @@ public:
 
 		if (ImGui::Button("Save Config")) {
 			laser.saveSettings();
+            ofJson warpPointsJson;
+            warpPointsJson["p0"]["x"] = warpPoints[0].x;
+            warpPointsJson["p0"]["y"] = warpPoints[0].y;
+            
+            warpPointsJson["p1"]["x"] = warpPoints[1].x;
+            warpPointsJson["p1"]["y"] = warpPoints[1].y;
+            
+            warpPointsJson["p2"]["x"] = warpPoints[2].x;
+            warpPointsJson["p2"]["y"] = warpPoints[2].y;
+            
+            warpPointsJson["p3"]["x"] = warpPoints[3].x;
+            warpPointsJson["p3"]["y"] = warpPoints[3].y;
+            
+            ofSavePrettyJson("warpPoints.json", warpPointsJson);
 		}
     }
     
@@ -286,6 +436,9 @@ private:
 
 	ofParameter<void> saveConfig;
     bool freeze;
+    
+    vector<glm::vec2> warpPoints;
+    int pointDraggingIndex;
 };
 
 
