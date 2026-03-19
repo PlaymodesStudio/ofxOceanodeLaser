@@ -73,7 +73,7 @@ public:
     
 private:
     shared_ptr<ildaController> controller;
-    ofxLaser::Laser* projector;
+    std::shared_ptr<ofxLaser::Laser> projector;
     ofxLaser::DacEtherDream dac;
     std::string ip;
     

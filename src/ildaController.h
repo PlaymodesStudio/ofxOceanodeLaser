@@ -21,6 +21,7 @@ public:
 //        laser.resetAllLasersToDefault();
 //        zone = laser.addCanvasZone(0, 0, -1, -1);
         ofxLaser::ZoneId zoneId = laser.addCanvasZone(0, 0, 800, 800);
+//        laser.addZoneToLaser(zoneId, 0);
         
         ofxLaser::ZoneId zoneId2 = laser.createNewBeamZone();
         laser.addZoneToLaser(zoneId2, 0);
@@ -45,7 +46,7 @@ public:
             
             warpPoints[3].x = warpPointsJson["p3"]["x"];
             warpPoints[3].y = warpPointsJson["p3"]["y"];
-            laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
+//            laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
         }
         else{
             warpPoints = {glm::vec2(0, 0), glm::vec2(1, 0), glm::vec2(0, 1), glm::vec2(1, 1)};
@@ -55,7 +56,9 @@ public:
     
     void update(){
         laser.send();
-        laser.update();
+//        if(!freeze){
+            laser.update();
+//        }
     }
     
     void draw(){
@@ -65,8 +68,8 @@ public:
         }
         for(int i = 0; i < laser.getNumLasers(); i++){
             auto &projectorRef = laser.getLaser(i);
-            if(ImGui::TreeNode(projectorRef.getLabel().c_str())){
-                const vector<ofxLaser::DacData>& dacList = dacAssigner->getDacList();
+            if(ImGui::TreeNode(projectorRef->getLabel().c_str())){
+                const vector<std::shared_ptr<ofxLaser::DacData>>& dacList = dacAssigner->getAvailableDacList();
                     
                 if (ImGui::BeginListBox("##listbox", glm::vec2(0, 0))){
                     
@@ -76,14 +79,14 @@ public:
                         
                     } else {
                         // add a combo box item for every element in the list
-                        for(const ofxLaser::DacData& dacdata : dacList) {
+                        for(const std::shared_ptr<ofxLaser::DacData>& dacdata : dacList) {
                             
                             // get the dac label (usually type + unique ID)
-                            string itemlabel = dacdata.getLabel();
+                            string itemlabel = dacdata->getLabel();
                             
                             ImGuiSelectableFlags selectableflags = 0;
                             
-                            if(!dacdata.available) {
+                            if(!dacdata->available) {
                                 // ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5);
                                 //itemlabel += " - no longer available";
                                 selectableflags|=ImGuiSelectableFlags_Disabled;
@@ -93,17 +96,17 @@ public:
                             // if this dac is assigned to a laser, show which laser
                             //  - this could be done at the other end?
                             
-                            if (ImGui::Selectable(itemlabel.c_str(), (dacdata.assignedLaser == &projectorRef), selectableflags)) {
+                            if (ImGui::Selectable(itemlabel.c_str(), (dacdata->assignedLaser == projectorRef), selectableflags)) {
                                 // then select dac
                                 // TODO : show a warning yes / no if :
                                 //      - we already are connected to a DAC
                                 //      - the chosen DAC is already being used by another laser
-                                dacAssigner->assignToLaser(dacdata.getLabel(), projectorRef);
+                                dacAssigner->assignToLaser(dacdata->getLabel(), projectorRef);
                             }
                             
-                            if(dacdata.assignedLaser != nullptr) {
+                            if(dacdata->assignedLaser != nullptr) {
                                 ImGui::SameLine(210 - 10);
-                                string label =" > " + dacdata.assignedLaser->getLabel();
+                                string label =" > " + dacdata->assignedLaser->getLabel();
                                 ImGui::Text("%s",label.c_str());
                             }
                             
@@ -124,55 +127,55 @@ public:
                 
                 //            gui->add(armed.set("ARMED", false));
                 //            armed.addListener(this, &ofxLaser::Projector::setArmed);
-                if(ImGui::Checkbox("Armed", (bool *)&projectorRef.armed.get())){
+                if(ImGui::Checkbox("Armed", (bool *)&projectorRef->armed.get())){
 					//Trigger event
-                    projectorRef.armed = projectorRef.armed;
+                    projectorRef->armed = projectorRef->armed;
                 }
                 
                 //            gui->add(testPattern.set("Test Pattern", 0,0,numTestPatterns));
                 //            gui->add(resetDac.set("Reset DAC", false));
-//                ImGui::SliderInt("Test Pattern", (int *)&projectorRef.testPattern.get(), 0, projectorRef.numTestPatterns);
-                //ImGui::Checkbox("Reset Dac", (bool *)&projectorRef.resetDac.get());
+//                ImGui::SliderInt("Test Pattern", (int *)&projectorRef->testPattern.get(), 0, projectorRef->numTestPatterns);
+                //ImGui::Checkbox("Reset Dac", (bool *)&projectorRef->resetDac.get());
                 
                 //            projectorparams.add(laserOnWhileMoving.set("Laser on while moving", false));
-                ImGui::Checkbox("Laser on while moving", (bool *)&projectorRef.laserOnWhileMoving.get());
+                ImGui::Checkbox("Laser on while moving", (bool *)&projectorRef->laserOnWhileMoving.get());
                 
                 //            projectorparams.add(flipX.set("Flip X", false));
                 //            projectorparams.add(flipY.set("Flip Y",false));
-                ImGui::Checkbox("Flip X", (bool *)&projectorRef.flipX.get());
-                ImGui::Checkbox("Flip Y", (bool *)&projectorRef.flipY.get());
+                ImGui::Checkbox("Flip X", (bool *)&projectorRef->flipX.get());
+                ImGui::Checkbox("Flip Y", (bool *)&projectorRef->flipY.get());
                 //            projectorparams.add(rotation.set("Output rotation",0,-90,90));
-                ImGui::SliderInt("Output Rotation", (int *)&projectorRef.rotation.get(), -180, 180);
+                ImGui::SliderInt("Output Rotation", (int *)&projectorRef->rotation.get(), -180, 180);
                 
                 //            projectorparams.add(outputOffset.set("Output position offset", glm::vec2(0,0), glm::vec2(-20,-20),glm::vec2(20,20)));
-                ImGui::SliderFloat2("Output position offset", (float *)&projectorRef.outputOffset.get(), -20, 20);
+                ImGui::SliderFloat2("Output position offset", (float *)&projectorRef->outputOffset.get(), -20, 20);
                 
                 if(ImGui::TreeNode("Advanced")){
 //                    advanced.add(speedMultiplier.set("Speed multiplier", 1,0.01,2));
-                    ImGui::SliderFloat("Speed multiplier", (float *)&projectorRef.speedMultiplier.get(), 0.01 ,2);
+//                    ImGui::SliderFloat("Speed multiplier", (float *)&projectorRef->speedMultiplier.get(), 0.01 ,2);
                     //            advanced.add(smoothHomePosition.set("Smooth home position", true));
-                    ImGui::Checkbox("Smooth home position", (bool *)&projectorRef.smoothHomePosition.get());
+                    ImGui::Checkbox("Smooth home position", (bool *)&projectorRef->smoothHomePosition.get());
                     //            advanced.add(sortShapes.set("Optimise shape draw order", true));
-                    ImGui::Checkbox("Optimise shape draw order", (bool *)&projectorRef.sortShapes.get());
+                    ImGui::Checkbox("Optimise shape draw order", (bool *)&projectorRef->sortShapes.get());
 					
-					ImGui::Checkbox("Experimental shape sorting", (bool *)&projectorRef.newShapeSortMethod.get());
+					ImGui::Checkbox("Experimental shape sorting", (bool *)&projectorRef->newShapeSortMethod.get());
 //					ofParameter<bool> newShapeSortMethod;
 //					ofParameter<bool> alwaysClockwise;
                     //            advanced.add(targetFramerate.set("Target framerate (experimental)", 25, 23, 120));
-                    ImGui::SliderFloat("Target framerate (experimental)", (float *)&projectorRef.targetFramerate.get(), 23, 120);
+                    ImGui::SliderFloat("Target framerate (experimental)", (float *)&projectorRef->targetFramerate.get(), 23, 120);
                     //            advanced.add(syncToTargetFramerate.set("Sync to Target framerate", false));
-                    ImGui::Checkbox("Sync to Target framerate", (bool *)&projectorRef.syncToTargetFramerate.get());
+                    ImGui::Checkbox("Sync to Target framerate", (bool *)&projectorRef->syncToTargetFramerate.get());
                     //            advanced.add(syncShift.set("Sync shift", 0, -50, 50));
-                    ImGui::SliderInt("Sync shift", (int *)&projectorRef.syncShift.get(), -50, 50);
+                    ImGui::SliderInt("Sync shift", (int *)&projectorRef->syncShift.get(), -50, 50);
                     
                     ImGui::TreePop();
                 }
                 
                 if(ImGui::TreeNode("Render profiles")){
                     // TODO set up default profiles
-					ofxLaser::RenderProfile& fast = projectorRef.getRenderProfile(OFXLASER_PROFILE_FAST);//projectorRef.renderProfiles.at(OFXLASER_PROFILE_FAST);
-                    ofxLaser::RenderProfile& defaultProfile = projectorRef.getRenderProfile(OFXLASER_PROFILE_DEFAULT);
-                    ofxLaser::RenderProfile& detail = projectorRef.getRenderProfile(OFXLASER_PROFILE_DETAIL);
+					ofxLaser::RenderProfile& fast = projectorRef->getRenderProfile(OFXLASER_PROFILE_FAST);//projectorRef->renderProfiles.at(OFXLASER_PROFILE_FAST);
+                    ofxLaser::RenderProfile& defaultProfile = projectorRef->getRenderProfile(OFXLASER_PROFILE_DEFAULT);
+                    ofxLaser::RenderProfile& detail = projectorRef->getRenderProfile(OFXLASER_PROFILE_DETAIL);
                     
                     
                     if(ImGui::TreeNode("Fast")){
@@ -228,11 +231,11 @@ public:
                     //            colourparams.add(red0.set("red 0", 0,0,1));
                     //TODO: Fer amb curves
                     
-                    ImGui::SliderFloat("Red 100", (float *)&projectorRef.colourSettings.red100.get(), 0, 1);
-                    ImGui::SliderFloat("Red 75", (float *)&projectorRef.colourSettings.red75.get(), 0, 1);
-                    ImGui::SliderFloat("Red 50", (float *)&projectorRef.colourSettings.red50.get(), 0, 1);
-                    ImGui::SliderFloat("Red 25", (float *)&projectorRef.colourSettings.red25.get(), 0, 1);
-                    ImGui::SliderFloat("Red 0", (float *)&projectorRef.colourSettings.red0.get(), 0, 1);
+                    ImGui::SliderFloat("Red 100", (float *)&projectorRef->colourSettings.red100.get(), 0, 1);
+                    ImGui::SliderFloat("Red 75", (float *)&projectorRef->colourSettings.red75.get(), 0, 1);
+                    ImGui::SliderFloat("Red 50", (float *)&projectorRef->colourSettings.red50.get(), 0, 1);
+                    ImGui::SliderFloat("Red 25", (float *)&projectorRef->colourSettings.red25.get(), 0, 1);
+                    ImGui::SliderFloat("Red 0", (float *)&projectorRef->colourSettings.red0.get(), 0, 1);
                     
                     //
                     //            colourparams.add(green100.set("green 100", 1,0,1));
@@ -241,11 +244,11 @@ public:
                     //            colourparams.add(green25.set("green 25", 0.25,0,1));
                     //            colourparams.add(green0.set("green 0", 0,0,1));
                     
-                    ImGui::SliderFloat("green 100", (float *)&projectorRef.colourSettings.green100.get(), 0, 1);
-                    ImGui::SliderFloat("green 75", (float *)&projectorRef.colourSettings.green75.get(), 0, 1);
-                    ImGui::SliderFloat("green 50", (float *)&projectorRef.colourSettings.green50.get(), 0, 1);
-                    ImGui::SliderFloat("green 25", (float *)&projectorRef.colourSettings.green25.get(), 0, 1);
-                    ImGui::SliderFloat("green 0", (float *)&projectorRef.colourSettings.green0.get(), 0, 1);
+                    ImGui::SliderFloat("green 100", (float *)&projectorRef->colourSettings.green100.get(), 0, 1);
+                    ImGui::SliderFloat("green 75", (float *)&projectorRef->colourSettings.green75.get(), 0, 1);
+                    ImGui::SliderFloat("green 50", (float *)&projectorRef->colourSettings.green50.get(), 0, 1);
+                    ImGui::SliderFloat("green 25", (float *)&projectorRef->colourSettings.green25.get(), 0, 1);
+                    ImGui::SliderFloat("green 0", (float *)&projectorRef->colourSettings.green0.get(), 0, 1);
                     //
                     //            colourparams.add(blue100.set("blue 100", 1,0,1));
                     //            colourparams.add(blue75.set("blue 75", 0.75,0,1));
@@ -253,11 +256,11 @@ public:
                     //            colourparams.add(blue25.set("blue 25", 0.25,0,1));
                     //            colourparams.add(blue0.set("blue 0", 0,0,1));
                     
-                    ImGui::SliderFloat("blue 100", (float *)&projectorRef.colourSettings.blue100.get(), 0, 1);
-                    ImGui::SliderFloat("blue 75", (float *)&projectorRef.colourSettings.blue75.get(), 0, 1);
-                    ImGui::SliderFloat("blue 50", (float *)&projectorRef.colourSettings.blue50.get(), 0, 1);
-                    ImGui::SliderFloat("blue 25", (float *)&projectorRef.colourSettings.blue25.get(), 0, 1);
-                    ImGui::SliderFloat("blue 0", (float *)&projectorRef.colourSettings.blue0.get(), 0, 1);
+                    ImGui::SliderFloat("blue 100", (float *)&projectorRef->colourSettings.blue100.get(), 0, 1);
+                    ImGui::SliderFloat("blue 75", (float *)&projectorRef->colourSettings.blue75.get(), 0, 1);
+                    ImGui::SliderFloat("blue 50", (float *)&projectorRef->colourSettings.blue50.get(), 0, 1);
+                    ImGui::SliderFloat("blue 25", (float *)&projectorRef->colourSettings.blue25.get(), 0, 1);
+                    ImGui::SliderFloat("blue 0", (float *)&projectorRef->colourSettings.blue0.get(), 0, 1);
                     
                     ImGui::TreePop();
                 }
@@ -357,7 +360,7 @@ public:
                         
                         if(pointsUpdated){
 //                            vector<glm::vec2> perimeterPoints = laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->getZoneTransform().getPerimeterPoints();
-                                laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
+//                                laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
                         }
                         
                         ImGui::EndChild(); // tanca canvas
@@ -368,12 +371,12 @@ public:
                 
                 
                 if(ImGui::TreeNode("Distortion")){
-                    auto &zoneQuadTransform =  laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad;
-                    ImGui::SliderFloat2("Shear", (float *)&zoneQuadTransform.shear, -2, 2);
-                    ImGui::SliderFloat2("Keystone", (float *)&zoneQuadTransform.keystone, -2, 2);
-                    ImGui::SliderFloat2("Linearity", (float *)&zoneQuadTransform.linearity, -2, 2);
-                    ImGui::SliderFloat2("Bow", (float *)&zoneQuadTransform.bow, -2, 2);
-                    ImGui::SliderFloat2("Pincushion", (float *)&zoneQuadTransform.pincushion, -2, 2);
+//                    auto &zoneQuadTransform =  laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad;
+//                    ImGui::SliderFloat2("Shear", (float *)&zoneQuadTransform.shear, -2, 2);
+//                    ImGui::SliderFloat2("Keystone", (float *)&zoneQuadTransform.keystone, -2, 2);
+//                    ImGui::SliderFloat2("Linearity", (float *)&zoneQuadTransform.linearity, -2, 2);
+//                    ImGui::SliderFloat2("Bow", (float *)&zoneQuadTransform.bow, -2, 2);
+//                    ImGui::SliderFloat2("Pincushion", (float *)&zoneQuadTransform.pincushion, -2, 2);
                     ImGui::TreePop();
                 }
                 
@@ -408,10 +411,11 @@ public:
 		}
     }
     
-    ofxLaser::Laser* addLaser(ofxLaser::DacBase& dac){
+    std::shared_ptr<ofxLaser::Laser>& addLaser(ofxLaser::DacBase& dac){
         //laser.addLaser(dac);
 		//laser.createAndAddLaser();
-        return &laser.getLaser(laser.getNumLasers()-1);
+
+        return laser.getLaser(laser.getNumLasers()-1);
     }
     
     ofxLaser::Manager& getManager(){
