@@ -15,16 +15,11 @@
 class ildaController : public ofxOceanodeBaseController{
 public:
     ildaController() : ofxOceanodeBaseController("ILDA"){
-        //laser.globalBrightness.set("Master Intensity", 0.1,0,1);
-//        laser.setCanvasSize(800, 800);
-//		laser.globalBrightness = 1;
-//        laser.resetAllLasersToDefault();
-//        zone = laser.addCanvasZone(0, 0, -1, -1);
-        ofxLaser::ZoneId zoneId = laser.addCanvasZone(0, 0, 800, 800);
-//        laser.addZoneToLaser(zoneId, 0);
+        laser.resetAllLasersToDefault();
+        zone = laser.addZone(0, 0, 800, 800);
+        laser.getLaser(0)->addZone(zone);
+        laser.getLaser(0)->getLaserZoneForZoneId(zone)->zoneTransformQuad.setDst(ofRectangle(0,0,800,800));
         
-        ofxLaser::ZoneId zoneId2 = laser.createNewBeamZone();
-        laser.addZoneToLaser(zoneId2, 0);
         
         dacAssigner = &laser.dacAssigner;
         dacAssigner->updateDacList();
@@ -359,8 +354,7 @@ public:
                         draw_list->ChannelsMerge();
                         
                         if(pointsUpdated){
-//                            vector<glm::vec2> perimeterPoints = laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->getZoneTransform().getPerimeterPoints();
-//                                laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
+                                laser.getLaser(i)->getLaserZoneForZoneId(zone)->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
                         }
                         
                         ImGui::EndChild(); // tanca canvas
@@ -411,7 +405,7 @@ public:
 		}
     }
     
-    std::shared_ptr<ofxLaser::Laser>& addLaser(ofxLaser::DacBase& dac){
+    std::shared_ptr<ofxLaser::Laser>& addLaser(){
         //laser.addLaser(dac);
 		//laser.createAndAddLaser();
 
@@ -437,6 +431,7 @@ public:
 private:
     ofxLaser::Manager laser;
     ofxLaser::DacAssigner* dacAssigner;
+    ofxLaser::ZoneId zone;
 
 	ofParameter<void> saveConfig;
     bool freeze;

@@ -10,7 +10,6 @@
 
 #include "ofxOceanodeNodeModel.h"
 #include "ildaController.h"
-#include "ofxLaserDacEtherdream.h"
 
 
 class ildaProjector : public ofxOceanodeNodeModel {
@@ -18,23 +17,8 @@ public:
     ildaProjector(shared_ptr<ildaController> iController) : controller(iController), ofxOceanodeNodeModel("ILDA Projector"){}
     
     void setup(){
-        ip = "192.168.1.51";
-        //TODO: restore ip from saved in iController "project save"
-        projector = controller->addLaser(dac);
+        projector = controller->addLaser();
         
-//        addParameter(projector->intensity.set("Intensity", 1, 0, 1));
-//
-//        addParameter(projector->pps.set("PPS", 30000,1000,90000));
-//        listener = projector->pps.newListener([this](int &f){
-//            projector->ppsChanged(f);
-//        });
-//
-//		addParameter(projector->colourChangeShift.set("Offset", 0,0,6));
-//        addParameter(projector->scannerSettings.moveSpeed.set("Speed", 5,0.1,50));
-//        addParameter(projector->scannerSettings.shapePreBlank.set("Blank b", 1,0,8));
-//        addParameter(projector->scannerSettings.shapePreOn.set("On b", 1,0,8));
-//        addParameter(projector->scannerSettings.shapePostOn.set("On a", 1,0,8));
-//        addParameter(projector->scannerSettings.shapePostBlank.set("Blank a", 1,0,8));
 		addParameter(intensity.set("Intensity", 1, 0, 1));
 		parameterListeners.push(intensity.newListener([this](float &f){
 			projector->intensity = f;
@@ -47,7 +31,7 @@ public:
 		
 		addParameter(colourChangeShift.set("Offset", 0,0,6));
 		parameterListeners.push(colourChangeShift.newListener([this](float &f){
-			projector->colourChangeShift = f;
+			projector->scannerSync = f;
 		}));
         addParameter(moveSpeed.set("Speed", 5,0.1,50));
 		parameterListeners.push(moveSpeed.newListener([this](float &f){
@@ -74,11 +58,7 @@ public:
 private:
     shared_ptr<ildaController> controller;
     std::shared_ptr<ofxLaser::Laser> projector;
-    ofxLaser::DacEtherDream dac;
-    std::string ip;
     
-    ofEventListener listener;
-	customGuiRegion dacSelector;
 	ofParameter<float> intensity;
 	ofParameter<int> pps;
 	ofParameter<float> colourChangeShift;
