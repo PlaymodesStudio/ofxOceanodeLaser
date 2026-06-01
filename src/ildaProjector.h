@@ -19,10 +19,15 @@ public:
     void setup(){
         projector = controller->addLaser();
         
-		addParameter(intensity.set("Intensity", 1, 0, 1));
-		parameterListeners.push(intensity.newListener([this](float &f){
-			projector->intensity = f;
-		}));
+        // Arm the laser DAC by default
+        projector->armed = true;
+        
+  addParameter(intensity.set("Intensity", 1, 0, 1));
+  parameterListeners.push(intensity.newListener([this](float &f){
+   projector->intensity = f;
+  }));
+  // Make sure the projector intensity reflects the default value (1.0)
+  projector->intensity = intensity.get();
 
         addParameter(pps.set("PPS", 30000,1000,90000));
         parameterListeners.push(pps.newListener([this](int &f){
