@@ -20,9 +20,26 @@ public:
         laser.getLaser(0)->addZone(zone);
         laser.getLaser(0)->getLaserZoneForZoneId(zone)->zoneTransformQuad.setDst(ofRectangle(0,0,800,800));
         
+        // Override ofxLaser's hard-coded safety default of 0.2; we want full brightness on start.
+        laser.globalBrightness = 1.0f;
         
         dacAssigner = &laser.dacAssigner;
         dacAssigner->updateDacList();
+        
+        // Startup re-arm: when ofxLaser::Manager loads its persisted settings,
+        // the ofParameter<bool> `armed` is restored via ofDeserialize, which
+        // writes the value directly into the parameter storage WITHOUT calling
+        // ofParameter::set(). That means the listener
+        //   armed.addListener(this, &ofxLaser::Laser::setDacArmed)
+        // (see ofxLaserLaser.cpp) never fires at load time, so the underlying
+        // DAC stays disarmed even though the GUI shows "Armed = true".
+        // Additionally, Laser::setDac() explicitly forces `armed = false` when
+        // a DAC is attached, which compounds the mismatch.
+        //
+        // We defer the re-arm to the first update() call (see below) so that
+        // any DAC enumeration / assignment from saved settings has had a chance
+        // to complete. Until then, we just remember we need to do it.
+        firstUpdate = true;
         
         freeze = false;
         
@@ -50,14 +67,36 @@ public:
     ~ildaController(){};
     
     void update(){
+        // On the first update tick after construction, force-retrigger the
+        // `armed` ofParameter listener for any laser whose persisted state is
+        // armed==true. Without this self-assignment, ofDeserialize silently
+        // restores armed to true in the parameter storage but never invokes
+        // ofxLaser::Laser::setDacArmed(), so the DAC is left disarmed and the
+        // laser produces no output until the user manually toggles the GUI
+        // checkbox. The self-assignment goes through ofParameter::set() which
+        // does fire the listener, properly calling dac->setArmed(true).
+        if(firstUpdate && laser.getNumLasers() > 0){
+            for(int i = 0; i < laser.getNumLasers(); i++){
+                auto& projectorRef = laser.getLaser(i);
+                if(projectorRef->armed.get()){
+                    projectorRef->armed = projectorRef->armed.get(); // force listener re-fire
+                }
+            }
+            firstUpdate = false;
+        }
+        
         laser.send();
 //        if(!freeze){
             laser.update();
 //        }
+  
+ 
     }
     
     void draw(){
-        ImGui::Checkbox("Freeze", &freeze);
+		//ImGui::Text(("GetNumLasers : " + ofToString(laser.getNumLasers()).c_str()));
+		ImGui::Text("GetNumLasers : %d",laser.getNumLasers());
+		ImGui::Checkbox("Freeze", &freeze);
         if(ImGui::SliderFloat("Master Intensity", (float*)&laser.globalBrightness.get(), 0.0f, 1.0f)){
             //newValue.notify(f);
         }
@@ -434,7 +473,8 @@ private:
     ofxLaser::ZoneId zone;
 
 	ofParameter<void> saveConfig;
-    bool freeze;
+	   bool freeze;
+	   bool firstUpdate;
     
     vector<glm::vec2> warpPoints;
     int pointDraggingIndex;
