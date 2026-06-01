@@ -35,7 +35,18 @@ public:
 				for (auto &fat : toSendFatline) {
 					vector<ofColor> colors(fat.getColors().size());
 					for (int i = 0; i < colors.size(); i++) {
-                        colors[i] = ofColor(fat.getColors()[i] * fat.getColors()[i].a);
+				                    // NOTE: Upstream (e.g. fatlineGenerator) already delivers
+				                    // PREMULTIPLIED ofFloatColor vertex colors: its "Opacity"
+				                    // parameter is multiplied into R, G, B AND A, so a white
+				                    // line at opacity α arrives here as (α, α, α, α).
+				                    // Do NOT multiply by .a again — that would square the
+				                    // alpha (α²) and cause:
+				                    //   - "Black Thr" to gate at √threshold instead of threshold
+				                    //     (e.g. Black Thr = 0.05 would cull at ~22% opacity
+				                    //     instead of the expected 5%),
+				                    //   - all colored laser output to be dimmed quadratically.
+				                    // Just narrow ofFloatColor → ofColor (×255).
+				                    colors[i] = ofColor(fat.getColors()[i]);
 					}
                     float colorSum = std::accumulate(colors.begin(), colors.end(), 0.0f, [](float current_sum, ofColor const& value) { return current_sum + std::max(value.r, std::max(value.g, value.b));});
 
