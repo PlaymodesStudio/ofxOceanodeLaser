@@ -15,6 +15,59 @@
 class ildaController : public ofxOceanodeBaseController{
 public:
     ildaController() : ofxOceanodeBaseController("ILDA"){
+        // ------------------------------------------------------------------
+        // Strategy A: detach ofxLaser::Manager from the global oF input
+        // events.
+        //
+        // Background:
+        // ofxLaser::Manager registers itself as a listener on
+        // ofEvents().mouse{Entered,Exited,Moved,Pressed,Released,Dragged,
+        // Scrolled} and ofEvents().keyPressed (see ofxLaserManager.cpp
+        // lines 130-139) at OF_EVENT_ORDER_BEFORE_APP. We do not draw any
+        // of ofxLaser's built-in ofxGui/canvas UI here — we only use it as
+        // an ILDA output API. However, those listeners still fire on every
+        // mouse drag (even drags that happen entirely inside ImGui
+        // widgets, because ImGui does not consume oF events by default
+        // and ofxLaser's mouseDragged() handler does not gate on
+        // isGuiVisible()/isGuiMouseDisabled() the way mousePressed() does).
+        //
+        // The consequence is that any mouse drag — e.g. dragging the
+        // "Master Intensity" slider in this controller's ImGui panel —
+        // reaches CanvasViewController::mouseDragged, dirties a
+        // MoveablePoly, makes canvasViewController->update() return true
+        // next frame, and triggers Manager::update() lines 410-412 to
+        // call updateZonesFromUI() (which unconditionally rewrites every
+        // InputZone rect) and then scheduleSaveSettings(). After the
+        // built-in 1-second debounce, ManagerBase::update() flushes the
+        // pending save and rewrites ofxLaser/laserSettings.json on disk.
+        // The diff that appears in the file is in the
+        // "zoneidobject"/"inputzone" rectangles (not in any parameter we
+        // actually touched), because that's where the per-frame UI->model
+        // sync pushes values.
+        //
+        // Since we never draw ofxLaser's GUI in this app, the cleanest
+        // fix is to disconnect those listeners entirely. We also flip
+        // setGuiVisible(false) and setGuiMouseDisabled(true) for good
+        // measure so any future code path inside ofxLaser that DOES
+        // consult those flags will also bail out.
+        //
+        // Legitimate persistence is preserved: explicit save paths
+        // (deleteZone, setCanvasSize, LaserMsg::SaveSettings, etc.) and
+        // the 1-second debounced flush in ManagerBase::update() still
+        // run. We just stop arming that flush from spurious mouse drags.
+        // ------------------------------------------------------------------
+        laser.setGuiVisible(false);
+        laser.setGuiMouseDisabled(true);
+
+        ofRemoveListener(ofEvents().mouseEntered,  &laser, &ofxLaser::Manager::mouseEntered,  OF_EVENT_ORDER_BEFORE_APP);
+        ofRemoveListener(ofEvents().mouseExited,   &laser, &ofxLaser::Manager::mouseExited,   OF_EVENT_ORDER_BEFORE_APP);
+        ofRemoveListener(ofEvents().mouseMoved,    &laser, &ofxLaser::Manager::mouseMoved,    OF_EVENT_ORDER_BEFORE_APP);
+        ofRemoveListener(ofEvents().mousePressed,  &laser, &ofxLaser::Manager::mousePressed,  OF_EVENT_ORDER_BEFORE_APP);
+        ofRemoveListener(ofEvents().mouseReleased, &laser, &ofxLaser::Manager::mouseReleased, OF_EVENT_ORDER_BEFORE_APP);
+        ofRemoveListener(ofEvents().mouseDragged,  &laser, &ofxLaser::Manager::mouseDragged,  OF_EVENT_ORDER_BEFORE_APP);
+        ofRemoveListener(ofEvents().mouseScrolled, &laser, &ofxLaser::Manager::mouseScrolled, OF_EVENT_ORDER_BEFORE_APP);
+        ofRemoveListener(ofEvents().keyPressed,    &laser, &ofxLaser::Manager::keyPressed,    OF_EVENT_ORDER_BEFORE_APP);
+
         laser.resetAllLasersToDefault();
         zone = laser.addZone(0, 0, 800, 800);
         laser.getLaser(0)->addZone(zone);
