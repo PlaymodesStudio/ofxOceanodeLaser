@@ -89,9 +89,10 @@ public:
         // Additionally, Laser::setDac() explicitly forces `armed = false` when
         // a DAC is attached, which compounds the mismatch.
         //
-        // We defer the re-arm to the first update() call (see below) so that
-        // any DAC enumeration / assignment from saved settings has had a chance
-        // to complete. Until then, we just remember we need to do it.
+        // We defer the re-arm and warp re-application to the first update()
+        // call (see below) so that any DAC enumeration / assignment from saved
+        // settings has had a chance to complete. Until then, we just remember
+        // we need to do it.
         firstUpdate = true;
         
         freeze = false;
@@ -120,28 +121,29 @@ public:
     ~ildaController(){};
     
     void update(){
+        laser.send();
+//        if(!freeze){
+            laser.update();
+//        }
+
         // On the first update tick after construction, force-retrigger the
         // `armed` ofParameter listener for any laser whose persisted state is
         // armed==true. Without this self-assignment, ofDeserialize silently
         // restores armed to true in the parameter storage but never invokes
         // ofxLaser::Laser::setDacArmed(), so the DAC is left disarmed and the
         // laser produces no output until the user manually toggles the GUI
-        // checkbox. The self-assignment goes through ofParameter::set() which
-        // does fire the listener, properly calling dac->setArmed(true).
+        // checkbox. We also re-apply the stored warp here so the output zone
+        // matches warpPoints.json before the user touches the UI.
         if(firstUpdate && laser.getNumLasers() > 0){
             for(int i = 0; i < laser.getNumLasers(); i++){
                 auto& projectorRef = laser.getLaser(i);
                 if(projectorRef->armed.get()){
                     projectorRef->armed = projectorRef->armed.get(); // force listener re-fire
                 }
+                applyWarpPointsToLaser(i);
             }
             firstUpdate = false;
         }
-        
-        laser.send();
-//        if(!freeze){
-            laser.update();
-//        }
   
  
     }
@@ -363,7 +365,8 @@ public:
                     float squareSize = availableWidth;
                     
                     // Iniciem un Child region perquè reservi espai
-                    if(ImGui::BeginChild("WarpCanvas", ImVec2(squareSize, squareSize), true, ImGuiWindowFlags_NoScrollWithMouse)){
+                    bool warpCanvasVisible = ImGui::BeginChild("WarpCanvas", ImVec2(squareSize, squareSize), true, ImGuiWindowFlags_NoScrollWithMouse);
+                    if(warpCanvasVisible){
                         
                         // Coordenades de dibuix absolutes
                         ImVec2 screenPos = ImGui::GetCursorScreenPos();
@@ -423,14 +426,11 @@ public:
                                     pointsUpdated = true;
                                 }
                             }
-                            if(ImGui::IsKeyPressed(ImGuiKey_Tab)){
+                            if(ImGui::IsKeyPressed(ImGuiKey_Tab) && !warpPoints.empty()){
                                 pointDraggingIndex = (pointDraggingIndex + 1) % warpPoints.size();
                             }
-                            
-                            if(warpPoints[pointDraggingIndex].x>1.0) warpPoints[pointDraggingIndex].x=1.0;
-                            if(warpPoints[pointDraggingIndex].x<0.0) warpPoints[pointDraggingIndex].x=0.0;
-                            if(warpPoints[pointDraggingIndex].y>1.0) warpPoints[pointDraggingIndex].y=1.0;
-                            if(warpPoints[pointDraggingIndex].y<0.0) warpPoints[pointDraggingIndex].y=0.0;
+
+                            clampWarpPoint(pointDraggingIndex);
                         }
                         ImDrawList* draw_list = ImGui::GetWindowDrawList();
                         vector<float> x_t(warpPoints.size());
@@ -446,11 +446,10 @@ public:
                         draw_list->ChannelsMerge();
                         
                         if(pointsUpdated){
-                                laser.getLaser(i)->getLaserZoneForZoneId(zone)->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
+                            applyWarpPointsToLaser(i);
                         }
-                        
-                        ImGui::EndChild(); // tanca canvas
                     }
+                    ImGui::EndChild(); // Always pair BeginChild/EndChild, even when clipped.
                     
                     ImGui::TreePop();
                 }
@@ -521,6 +520,30 @@ public:
     
     ofEvent<float> newValue;
 private:
+    void applyWarpPointsToLaser(int laserIndex){
+        if(laserIndex < 0 || laserIndex >= laser.getNumLasers()) return;
+        if(warpPoints.size() < 4) return;
+
+        auto outputZone = laser.getLaser(laserIndex)->getLaserZoneForZoneId(zone);
+        if(outputZone == nullptr) return;
+
+        outputZone->zoneTransformQuad.setDstCorners(
+            warpPoints[0] * 800,
+            warpPoints[1] * 800,
+            warpPoints[2] * 800,
+            warpPoints[3] * 800
+        );
+    }
+
+    void clampWarpPoint(int pointIndex){
+        if(pointIndex < 0 || pointIndex >= static_cast<int>(warpPoints.size())) return;
+
+        if(warpPoints[pointIndex].x > 1.0f) warpPoints[pointIndex].x = 1.0f;
+        if(warpPoints[pointIndex].x < 0.0f) warpPoints[pointIndex].x = 0.0f;
+        if(warpPoints[pointIndex].y > 1.0f) warpPoints[pointIndex].y = 1.0f;
+        if(warpPoints[pointIndex].y < 0.0f) warpPoints[pointIndex].y = 0.0f;
+    }
+
     ofxLaser::Manager laser;
     ofxLaser::DacAssigner* dacAssigner;
     ofxLaser::ZoneId zone;
