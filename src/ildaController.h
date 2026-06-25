@@ -11,6 +11,7 @@
 #include "ofxOceanodeBaseController.h"
 #include "imgui.h"
 #include "ofxLaserManager.h"
+#include "ofxFatLine.h"
 
 class ildaController : public ofxOceanodeBaseController{
 public:
@@ -96,6 +97,7 @@ public:
         firstUpdate = true;
         
         freeze = false;
+        simulatorFrameStamp = UINT64_MAX; // force clear on first publishLaserShape call
         
         pointDraggingIndex = -1;
         ofJson warpPointsJson = ofLoadJson("warpPoints.json");
@@ -506,7 +508,34 @@ public:
     ofxLaser::Manager& getManager(){
         return laser;
     }
-    
+
+    // -------------------------------------------------------------------
+    // Simulator buffer — flat [x, y, r, g, b, ..., -1] per frame.
+    // Mirrors the format sent by polyOscSender (x/y normalised by 800,
+    // r/g/b in 0..1).  ildaShape calls this for every fatline it sends
+    // to the laser; the buffer is auto-cleared on the first call of each
+    // new oF frame so the laserSimulator node always gets fresh data.
+    // -------------------------------------------------------------------
+    void publishLaserShape(const ofxFatLine& fat, const vector<ofColor>& colors) {
+        uint64_t currentFrame = static_cast<uint64_t>(ofGetFrameNum());
+        if (currentFrame != simulatorFrameStamp) {
+            latestSimulatorData.clear();
+            simulatorFrameStamp = currentFrame;
+        }
+        for (int i = 0; i < (int)fat.size(); i++) {
+            latestSimulatorData.push_back(fat.getVertices()[i].x / 800.0f);
+            latestSimulatorData.push_back(fat.getVertices()[i].y / 800.0f);
+            latestSimulatorData.push_back(colors[i].r / 255.0f);
+            latestSimulatorData.push_back(colors[i].g / 255.0f);
+            latestSimulatorData.push_back(colors[i].b / 255.0f);
+        }
+        latestSimulatorData.push_back(-1.0f);
+    }
+
+    const vector<float>& getSimulatorData() const {
+        return latestSimulatorData;
+    }
+
     vector<ofxLaser::Point> getAllLaserPoints(){
         vector<ofxLaser::Point> points;
         for(auto &l : laser.getLasers()){
@@ -548,10 +577,14 @@ private:
     ofxLaser::DacAssigner* dacAssigner;
     ofxLaser::ZoneId zone;
 
-	ofParameter<void> saveConfig;
-	   bool freeze;
-	   bool firstUpdate;
-    
+ ofParameter<void> saveConfig;
+ bool freeze;
+ bool firstUpdate;
+
+    // Simulator buffer (see publishLaserShape / getSimulatorData above)
+    vector<float>   latestSimulatorData;
+    uint64_t        simulatorFrameStamp;
+
     vector<glm::vec2> warpPoints;
     int pointDraggingIndex;
 };

@@ -1,0 +1,625 @@
+//
+//  laserSimulator.h
+//  ofxOceanodeLaser
+//
+//  Renders a real-time 3D simulation of all ILDA laser shapes currently
+//  being sent to the laser, inside an ImGui window hosting a 2048x2048 FBO.
+//
+//  Capture mechanism: ildaShape calls controller->publishLaserShape() for
+//  every fatline that passes the black-threshold test, pushing a flat
+//  [x, y, r, g, b, ..., -1] buffer (x/y normalised by 800, colours 0..1).
+//  This node reads that buffer each frame and rebuilds beam geometry.
+//
+//  World convention:
+//    - Floor  = XY plane (Z = 0)
+//    - Beam fires along +Z toward the laser mesh plane at Z = LaserDistance
+//    - Camera orbit: Azimuth around Z, Elevation from XY plane
+//
+//  See plans/laser-simulator-node-plan.md for full design rationale.
+//
+
+#ifndef laserSimulator_h
+#define laserSimulator_h
+
+#include "ofxOceanodeNodeModel.h"
+#include "ildaController.h"
+#include "ofMain.h"
+
+class laserSimulator : public ofxOceanodeNodeModel {
+public:
+    laserSimulator(shared_ptr<ildaController> iController)
+        : controller(iController)
+        , ofxOceanodeNodeModel("Laser Simulator")
+    {}
+
+    // ------------------------------------------------------------------
+    // setup() — all parameter wiring lives here (never in the constructor)
+    // ------------------------------------------------------------------
+    void setup() override {
+
+        // --- Projection ---
+        addParameter(sphericalProjection.set("Spherical Proj", false));
+        addParameter(fovX.set("FOV X",     40.0f,  1.0f, 120.0f));
+        addParameter(fovY.set("FOV Y",     40.0f,  1.0f, 120.0f));
+        addParameter(nearWidth.set("Near Width", 0.05f, 0.0f, 2.0f));
+        addParameter(offsetX.set("Offset X",  0.0f, -1.0f, 1.0f));
+        addParameter(offsetY.set("Offset Y",  0.0f, -1.0f, 1.0f));
+        addParameter(laserDistance.set("Laser Dist", 8.0f, 0.1f, 50.0f));
+
+        // --- Scene geometry ---
+        addParameter(floorThickness.set("Floor Thick",    0.04f, 0.0f, 1.0f));
+        addParameter(pointCylinderSize.set("Dot Cyl Size",  0.04f, 0.0f, 1.0f));
+        addParameter(pointProjectionSize.set("Dot Proj Size", 0.04f, 0.0f, 2.0f));
+        addParameter(pointCylinderRes.set("Dot Cyl Res",  6, 3, 16));
+        addParameter(pointProjectionRes.set("Dot Proj Res", 6, 3, 16));
+
+        // --- Camera ---
+        // Orbit/distance driven by mouse; Near/Far exposed as adjustable params.
+        addParameter(camNear.set("Cam Near", 0.01f,  0.001f,  10.0f));
+        addParameter(camFar.set("Cam Far",  500.0f, 10.0f,  5000.0f));
+
+        easyCam.disableMouseInput();
+        easyCam.setNearClip(camNear);
+        easyCam.setFarClip(camFar);
+        glm::vec3 orbitCenter(0.0f, 0.0f, (float)laserDistance.get() * 0.5f);
+        easyCam.orbit(camAzimuth, camElevation, camOrbDist, orbitCenter);
+		easyCam.setRelativeYAxis(false);
+		easyCam.setUpAxis(glm::vec3(0,0,1));
+		
+        // Update clip planes when params change
+        parameterListeners.push(camNear.newListener([this](float &v){
+            easyCam.setNearClip(v);
+        }));
+        parameterListeners.push(camFar.newListener([this](float &v){
+            easyCam.setFarClip(v);
+        }));
+
+        // --- Gizmos ---
+        addParameter(drawFloor.set("Draw Floor", true));
+        addParameter(drawAxis.set("Draw Axis",   true));
+
+        // --- Window ---
+        addParameter(showWindow.set("Show", true));
+
+        // --- Rendering ---
+        addParameter(renderLikeUnity.set("RenderLikeUnity", true));
+        addParameter(brightness.set("Brightness", 0.75f, 0.0f, 10.0f));
+
+        // Allocate FBO once at 2048x2048 with depth
+        ofFboSettings fboSettings;
+        fboSettings.width           = FBO_SIZE;
+        fboSettings.height          = FBO_SIZE;
+        fboSettings.internalformat  = GL_RGBA;
+        fboSettings.useDepth        = true;
+        fboSettings.useStencil      = false;
+        fboSettings.numSamples      = 0;
+        fbo.allocate(fboSettings);
+
+        fbo.begin();
+        ofClear(10, 10, 20, 255);
+        fbo.end();
+    }
+
+    // ------------------------------------------------------------------
+    // Preset safety stubs.
+    // laserSimulator holds no ofxFatLine listeners of its own (it reads
+    // the shared buffer), so these are lightweight guards in case the
+    // framework fires update() during deserialization.
+    // ------------------------------------------------------------------
+    void presetWillBeLoaded() override { disableUpdate = true; }
+    void presetHasLoaded()    override { disableUpdate = false; }
+
+    // ------------------------------------------------------------------
+    // update() — rebuild geometry from the shared simulator buffer.
+    // We always rebuild when the buffer is non-empty (live laser data
+    // changes every frame); when it IS empty we still call renderToFbo()
+    // so the gizmos (floor grid, axes) continue to show.
+    // ------------------------------------------------------------------
+    void update(ofEventArgs& /*args*/) override {
+        if (disableUpdate) return;
+        const vector<float>& data = controller->getSimulatorData();
+        rebuildGeometry(data);
+        renderToFbo();
+    }
+
+    // ------------------------------------------------------------------
+    // draw() — called by Oceanode inside the main ImGui frame.
+    // Opens a standalone floating window when "Show Window" is true.
+    // Mouse drag over the image orbits the easyCam; scroll wheel zooms.
+    // ------------------------------------------------------------------
+    void draw(ofEventArgs& /*args*/) override {
+        if (!fbo.isAllocated()) return;
+        if (!showWindow)        return;
+
+        ImTextureID texId = (ImTextureID)(uintptr_t)fbo.getTexture().getTextureData().textureID;
+
+        ImGui::SetNextWindowSize(ImVec2(600, 620), ImGuiCond_FirstUseEver);
+        bool windowOpen = showWindow.get();
+        if (ImGui::Begin("Laser Simulator##laserSimWin",
+                         &windowOpen,
+                         ImGuiWindowFlags_NoFocusOnAppearing)) {
+            float winW = ImGui::GetContentRegionAvail().x;
+            float winH = ImGui::GetContentRegionAvail().y;
+            float sz   = std::max(std::min(winW, winH), 100.0f);
+            // Flip UV Y: oF FBO origin = bottom-left, ImGui expects top-left
+            ImGui::Image(texId, ImVec2(sz, sz), ImVec2(0, 1), ImVec2(1, 0));
+
+            // ---- Interactive orbit via ImGui mouse input ----------------
+            // Only handle input when the mouse is over this image widget.
+            if (ImGui::IsItemHovered()) {
+                const ImGuiIO& io = ImGui::GetIO();
+
+                // Left-drag → orbit (azimuth / elevation)
+                if (io.MouseDown[0]) {
+                    camAzimuth   -= io.MouseDelta.x * 0.4f;
+                    camElevation -= io.MouseDelta.y * 0.4f;
+                    camElevation  = ofClamp(camElevation, -89.0f, 89.0f);
+                }
+                // Scroll wheel → zoom (cam distance)
+                if (io.MouseWheel != 0.0f) {
+                    camOrbDist -= io.MouseWheel * 0.5f;
+                    camOrbDist  = std::max(camOrbDist, 0.5f);
+                }
+
+                // Apply to easyCam — orbit around beam midpoint
+                glm::vec3 orbitCenter(0.0f, 0.0f, (float)laserDistance * 0.5f);
+                easyCam.orbit(camAzimuth, camElevation, camOrbDist, orbitCenter);
+            }
+        }
+        ImGui::End();
+        // Sync ImGui close-button click back to the Oceanode parameter
+        if (!windowOpen) showWindow = false;
+    }
+
+private:
+    // ------------------------------------------------------------------
+    // Constants
+    // ------------------------------------------------------------------
+    static constexpr int   FBO_SIZE  = 2048;
+    static constexpr int   STRIDE    = 5;  // x, y, r, g, b per vertex
+
+    // ------------------------------------------------------------------
+    // Helper: is the vertex at `idx` an isolated single point?
+    // (next entry in buffer is -1 or we're at the end)
+    // ------------------------------------------------------------------
+    bool isSinglePoint(const vector<float>& data, int idx) const {
+        int next = idx + STRIDE;
+        if (next >= (int)data.size()) return true;
+        return (data[next] == -1.0f);
+    }
+
+    // ------------------------------------------------------------------
+    // Projection: normalised laser angles → 3D floor-hit point
+    //
+    // The laser head (origin) is at (offsetX, offsetY, laserDistance).
+    // Beams fire DOWNWARD (−Z) with angular spread from FOV_X / FOV_Y.
+    //
+    //  Planar (Spherical Projection = false):
+    //    Beam direction is tilted by angX/angY from straight-down (−Z).
+    //    The beam intersects the Z=0 floor plane at:
+    //      hit.x = offsetX + angX * laserDistance
+    //      hit.y = offsetY + angY * laserDistance
+    //      hit.z = 0
+    //
+    //  Spherical dome (Spherical Projection = true):
+    //    Direction vector tilted angX/angY from −Z axis; intersect Z=0:
+    //      dir = normalize(sin(angX)*cos(angY), cos(angX)*sin(angY), −cos(angX)*cos(angY))
+    //      t   = laserDistance / |dir.z|   (distance to Z=0 from laser head)
+    //      hit = origin + dir * t
+    // ------------------------------------------------------------------
+    glm::vec3 computeProjected(float angX, float angY) const {
+        float LD  = laserDistance;
+        float ox  = (float)offsetX;
+        float oy  = (float)offsetY;
+        if (sphericalProjection) {
+            // Direction fires downward (−Z) with angular spread
+            glm::vec3 dir( sinf(angX) * cosf(angY),
+                           cosf(angX) * sinf(angY),
+                          -cosf(angX) * cosf(angY));   // −Z is downward
+            dir = glm::normalize(dir);
+            // Intersect with Z=0 plane: origin.z + dir.z * t = 0 → t = LD / |dir.z|
+            float t = (fabsf(dir.z) > 1e-6f) ? LD / fabsf(dir.z) : LD;
+            return glm::vec3(ox, oy, LD) + dir * t;
+        } else {
+            // Planar: beam spread proportional to height (laserDistance)
+            return glm::vec3(ox + angX * LD, oy + angY * LD, 0.0f);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Apply brightness multiplier to a color (clamped to [0,1]).
+    // Used in RenderLikeUnity mode; skipped in self-illuminated mode.
+    // ------------------------------------------------------------------
+    ofFloatColor applyBrightness(const ofFloatColor& c) const {
+        float b = brightness;
+        return ofFloatColor(std::min(c.r * b, 1.0f),
+                            std::min(c.g * b, 1.0f),
+                            std::min(c.b * b, 1.0f),
+                            std::min(0.52f * b, 1.0f)); // Unity _Alpha=0.52
+    }
+
+    // ------------------------------------------------------------------
+    // Add a cylinder from `origin` to `proj`, capped with a disc at proj.
+    // Used for single isolated laser dots.
+    // ------------------------------------------------------------------
+    void addCylinder(ofMesh& mesh,
+                     const glm::vec3& origin, const glm::vec3& proj,
+                     const ofFloatColor& col) const {
+        int   cylRes  = pointCylinderRes;
+        float cylR    = pointCylinderSize * 0.5f;
+        int   discRes = pointProjectionRes;
+        float discR   = pointProjectionSize * 0.5f;
+
+        // Beam axis direction (normalised)
+        glm::vec3 axis = glm::normalize(proj - origin);
+        // Build two perpendicular vectors to the axis
+        glm::vec3 arbitrary = (fabsf(axis.z) < 0.9f)
+                                ? glm::vec3(0, 0, 1)
+                                : glm::vec3(1, 0, 0);
+        glm::vec3 right = glm::normalize(glm::cross(axis, arbitrary));
+        glm::vec3 up    = glm::cross(axis, right);
+
+        // ---- Cylinder wall (quad strip around the tube) ----
+        uint32_t base = (uint32_t)mesh.getNumVertices();
+        for (int i = 0; i < cylRes; ++i) {
+            float a0 = (float)i       / (float)cylRes * TWO_PI;
+            float a1 = (float)(i + 1) / (float)cylRes * TWO_PI;
+
+            glm::vec3 off0 = (right * cosf(a0) + up * sinf(a0)) * cylR;
+            glm::vec3 off1 = (right * cosf(a1) + up * sinf(a1)) * cylR;
+
+            uint32_t vi = (uint32_t)mesh.getNumVertices();
+            mesh.addVertex(origin + off0);  mesh.addColor(col);  // 0 near-left
+            mesh.addVertex(proj   + off0);  mesh.addColor(col);  // 1 far-left
+            mesh.addVertex(origin + off1);  mesh.addColor(col);  // 2 near-right
+            mesh.addVertex(proj   + off1);  mesh.addColor(col);  // 3 far-right
+
+            mesh.addIndex(vi+1); mesh.addIndex(vi+0); mesh.addIndex(vi+2);
+            mesh.addIndex(vi+2); mesh.addIndex(vi+3); mesh.addIndex(vi+1);
+        }
+
+        // ---- Projection disc (fan at `proj`) ----
+        uint32_t centerIdx = (uint32_t)mesh.getNumVertices();
+        mesh.addVertex(proj); mesh.addColor(col); // center
+
+        for (int i = 0; i <= discRes; ++i) {
+            float a = (float)i / (float)discRes * TWO_PI;
+            glm::vec3 off = (right * cosf(a) + up * sinf(a)) * discR;
+            mesh.addVertex(proj + off); mesh.addColor(col);
+        }
+
+        for (int i = 0; i < discRes; ++i) {
+            uint32_t va = centerIdx + 1 + i;
+            uint32_t vb = centerIdx + 1 + (i + 1) % discRes;
+            mesh.addIndex(centerIdx);
+            mesh.addIndex(va);
+            mesh.addIndex(vb);
+        }
+        (void)base;
+    }
+
+    // ------------------------------------------------------------------
+    // Add a floor disc at the given center (on the Z=0 plane)
+    // Used in the floor projection pass for single laser dots.
+    // ------------------------------------------------------------------
+    void addFloorDisc(ofMesh& mesh,
+                      const glm::vec3& center,
+                      const ofFloatColor& col) const {
+        int   res = pointProjectionRes;
+        float r   = pointProjectionSize * 0.5f;
+
+        uint32_t centerIdx = (uint32_t)mesh.getNumVertices();
+        mesh.addVertex(center); mesh.addColor(col);
+
+        for (int i = 0; i <= res; ++i) {
+            float a = (float)i / (float)res * TWO_PI;
+            glm::vec3 off(cosf(a) * r, sinf(a) * r, 0.0f);
+            mesh.addVertex(center + off); mesh.addColor(col);
+        }
+        for (int i = 0; i < res; ++i) {
+            uint32_t va = centerIdx + 1 + i;
+            uint32_t vb = centerIdx + 1 + (i + 1) % res;
+            mesh.addIndex(centerIdx);
+            mesh.addIndex(va);
+            mesh.addIndex(vb);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Main geometry rebuild — port of Unity LaserGeomCpu::UpdateData()
+    // Two passes:
+    //   Pass 1 → beamMesh  (cylinder beams from Z=0 origin → projected point)
+    //   Pass 2 → floorMesh (thickened quads + discs on the Z=0 floor plane)
+    // ------------------------------------------------------------------
+    void rebuildGeometry(const vector<float>& data) {
+        beamMesh.clear();
+        floorMesh.clear();
+
+        if (data.empty()) return;
+
+        beamMesh.setMode(OF_PRIMITIVE_TRIANGLES);
+        floorMesh.setMode(OF_PRIMITIVE_TRIANGLES);
+
+        float aX = ofDegToRad(fovX) * 0.5f;
+        float aY = ofDegToRad(fovY) * 0.5f;
+        float ox = ofDegToRad(offsetX);
+        float oy = ofDegToRad(offsetY);
+        float NW = nearWidth;
+        bool  lu = renderLikeUnity;
+
+        // ================================================================
+        // Pass 1: beam mesh
+        // ================================================================
+        {
+            bool     bFirst   = true;
+            uint32_t quadIdx  = 0;
+            int      vertBase = 0;  // vertex offset at start of current polyline
+
+            for (int idx = 0; idx < (int)data.size(); ) {
+                if (data[idx] == -1.0f) {
+                    bFirst  = true;
+                    quadIdx = 0;
+                    ++idx;
+                    continue;
+                }
+
+                float p0X = data[idx + 0] * 2.0f - 1.0f;
+                float p0Y = data[idx + 1] * 2.0f - 1.0f;
+                ofFloatColor raw(data[idx+2], data[idx+3], data[idx+4], 1.0f);
+                ofFloatColor col = lu ? applyBrightness(raw) : raw;
+
+                float angX = p0X * aX + ox;
+                float angY = p0Y * aY + oy;
+
+                glm::vec3 proj   = computeProjected(angX, angY);
+                // Laser head (origin) is at (offsetX, offsetY, laserDistance).
+                // NearWidth adds a slight spread around the head position for
+                // visual beam-width effect at the source.
+                glm::vec3 origin((float)offsetX + p0X * NW,
+                                 (float)offsetY + p0Y * NW,
+                                 (float)laserDistance);
+
+                bool bSingle = isSinglePoint(data, idx);
+
+                if (bFirst && bSingle) {
+                    // Isolated point: full cylinder + disc
+                    addCylinder(beamMesh, origin, proj, col);
+                    bFirst  = true;
+                    quadIdx = 0;
+                    idx    += STRIDE;
+                    continue;
+                }
+
+                // Quad strip segment (2 verts: origin + projected)
+                uint32_t vi = (uint32_t)beamMesh.getNumVertices();
+                beamMesh.addVertex(origin); beamMesh.addColor(col);
+                beamMesh.addVertex(proj);   beamMesh.addColor(col);
+
+                if (!bFirst && quadIdx >= 1) {
+                    // Connect to previous pair with two triangles
+                    uint32_t a = vi - 2, b = vi - 1;
+                    uint32_t c = vi,     d = vi + 1;
+                    beamMesh.addIndex(b); beamMesh.addIndex(a); beamMesh.addIndex(c);
+                    beamMesh.addIndex(c); beamMesh.addIndex(d); beamMesh.addIndex(b);
+                }
+
+                ++quadIdx;
+                bFirst = false;
+                idx   += STRIDE;
+            }
+        }
+
+        // ================================================================
+        // Pass 2: floor projection mesh (Z = 0 plane)
+        // ================================================================
+        {
+            bool bFirst = true;
+
+            for (int idx = 0; idx < (int)data.size(); ) {
+                if (data[idx] == -1.0f) {
+                    bFirst = true;
+                    ++idx;
+                    continue;
+                }
+
+                float p0X = data[idx + 0] * 2.0f - 1.0f;
+                float p0Y = data[idx + 1] * 2.0f - 1.0f;
+                ofFloatColor raw(data[idx+2], data[idx+3], data[idx+4], 1.0f);
+                ofFloatColor col = lu ? applyBrightness(raw) : raw;
+
+                float angX = p0X * aX + ox;
+                float angY = p0Y * aY + oy;
+
+                glm::vec3 proj = computeProjected(angX, angY);
+                // Floor footprint = same XY as projection, projected to Z=0
+                glm::vec3 fp(proj.x, proj.y, 0.0f);
+
+                bool bSingle = isSinglePoint(data, idx);
+
+                if (bFirst && bSingle) {
+                    // Single dot: a disc on the floor
+                    addFloorDisc(floorMesh, fp, col);
+                    bFirst = true;
+                    idx   += STRIDE;
+                    continue;
+                }
+
+                // Segment: check whether the next vertex is also a segment
+                // (not a -1). Build a thickened quad on the floor.
+                if (idx < (int)data.size() - STRIDE && data[idx + STRIDE] != -1.0f) {
+                    float p1X = data[idx + STRIDE + 0] * 2.0f - 1.0f;
+                    float p1Y = data[idx + STRIDE + 1] * 2.0f - 1.0f;
+                    ofFloatColor raw1(data[idx+STRIDE+2],data[idx+STRIDE+3],data[idx+STRIDE+4],1.0f);
+                    ofFloatColor col1 = lu ? applyBrightness(raw1) : raw1;
+
+                    float a1X = p1X * aX + ox;
+                    float a1Y = p1Y * aY + oy;
+                    glm::vec3 proj1 = computeProjected(a1X, a1Y);
+                    glm::vec3 fp1(proj1.x, proj1.y, 0.0f);
+
+                    // Perpendicular in the XY/floor plane
+                    glm::vec2 seg   = glm::vec2(fp1.x - fp.x, fp1.y - fp.y);
+                    float     segLen = glm::length(seg);
+                    if (segLen > 1e-6f) {
+                        glm::vec2 perp = glm::normalize(glm::vec2(-seg.y, seg.x))
+                                         * (float)floorThickness;
+
+                        uint32_t vi = (uint32_t)floorMesh.getNumVertices();
+
+                        // 4 vertices: fp-perp, fp+perp, fp1-perp, fp1+perp (all Z=0)
+                        floorMesh.addVertex(glm::vec3(fp.x  - perp.x, fp.y  - perp.y, 0));
+                        floorMesh.addColor(col);
+                        floorMesh.addVertex(glm::vec3(fp.x  + perp.x, fp.y  + perp.y, 0));
+                        floorMesh.addColor(col);
+                        floorMesh.addVertex(glm::vec3(fp1.x - perp.x, fp1.y - perp.y, 0));
+                        floorMesh.addColor(col1);
+                        floorMesh.addVertex(glm::vec3(fp1.x + perp.x, fp1.y + perp.y, 0));
+                        floorMesh.addColor(col1);
+
+                        floorMesh.addIndex(vi+1); floorMesh.addIndex(vi+0); floorMesh.addIndex(vi+2);
+                        floorMesh.addIndex(vi+2); floorMesh.addIndex(vi+3); floorMesh.addIndex(vi+1);
+                    }
+                }
+
+                bFirst = false;
+                idx   += STRIDE;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Floor grid: 5 lines per axis → 4 cells; span = 10 × 10 on Z=0
+    // ------------------------------------------------------------------
+    void drawFloorGrid() const {
+        const int   N      = 5;      // 5 lines ⇒ 4 cells per axis
+        const float extent = 5.0f;   // half-size → total span 10
+
+        ofSetColor(60, 60, 80, 200);
+        ofSetLineWidth(1.0f);
+
+        for (int i = 0; i < N; ++i) {
+            float t = ofMap(i, 0, N - 1, -extent, extent);
+            ofDrawLine(glm::vec3(-extent, t, 0), glm::vec3(extent, t, 0)); // along X
+            ofDrawLine(glm::vec3(t, -extent, 0), glm::vec3(t, extent, 0)); // along Y
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // XYZ axis gizmo at origin (X=red, Y=green, Z=blue)
+    // ------------------------------------------------------------------
+    void drawAxes() const {
+        const float len = 1.5f;
+        ofSetLineWidth(2.0f);
+        ofSetColor(ofColor::red);
+        ofDrawLine(glm::vec3(0,0,0), glm::vec3(len, 0, 0));
+        ofSetColor(ofColor::green);
+        ofDrawLine(glm::vec3(0,0,0), glm::vec3(0, len, 0));
+        ofSetColor(ofColor::blue);
+        ofDrawLine(glm::vec3(0,0,0), glm::vec3(0, 0, len));
+    }
+
+    // ------------------------------------------------------------------
+    // Render the 3D scene into the FBO
+    // ------------------------------------------------------------------
+    void renderToFbo() {
+        fbo.begin();
+        ofClear(10, 10, 20, 255);
+
+        easyCam.begin(ofRectangle(0, 0, FBO_SIZE, FBO_SIZE));
+
+        ofEnableDepthTest();
+
+        if (drawFloor) drawFloorGrid();
+        if (drawAxis)  drawAxes();
+
+        if (renderLikeUnity) {
+            // ---------------------------------------------------
+            // RenderLikeUnity = true
+            //   Additive transparent blending: beams accumulate
+            //   brightness, matching the glowing laser look.
+            //   Brightness is already baked into vertex alpha
+            //   (applyBrightness sets alpha = 0.52 * brightness).
+            //   Depth write off so overlapping beams add up.
+            // ---------------------------------------------------
+            ofDisableDepthTest();
+            ofEnableAlphaBlending();
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // additive
+            ofSetColor(255, 255, 255, 255);
+
+            beamMesh.draw();
+            floorMesh.draw();
+
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); // restore
+            ofEnableDepthTest();
+
+        } else {
+            // ---------------------------------------------------
+            // RenderLikeUnity = false
+            //   Self-illuminated: raw vertex colours, no shading,
+            //   no blending tricks.
+            // ---------------------------------------------------
+            ofDisableLighting();
+            ofSetColor(255, 255, 255, 255);
+
+            beamMesh.draw();
+            floorMesh.draw();
+        }
+
+        easyCam.end();
+        fbo.end();
+    }
+
+    // ------------------------------------------------------------------
+    // Data members
+    // ------------------------------------------------------------------
+    shared_ptr<ildaController> controller;
+
+    ofFbo      fbo;
+    ofVboMesh  beamMesh;   // GPU-resident for faster draw calls each frame
+    ofVboMesh  floorMesh;
+
+    // Parameters — projection
+    ofParameter<bool>  sphericalProjection;
+    ofParameter<float> fovX;
+    ofParameter<float> fovY;
+    ofParameter<float> nearWidth;
+    ofParameter<float> offsetX;
+    ofParameter<float> offsetY;
+    ofParameter<float> laserDistance;
+
+    // Parameters — geometry detail
+    ofParameter<float> floorThickness;
+    ofParameter<float> pointCylinderSize;
+    ofParameter<float> pointProjectionSize;
+    ofParameter<int>   pointCylinderRes;
+    ofParameter<int>   pointProjectionRes;
+
+    // Camera — ofEasyCam with manual ImGui orbit input
+    ofEasyCam  easyCam;
+    float      camAzimuth   =   0.0f;   // degrees, accumulated from mouse drag
+    float      camElevation =  30.0f;   // degrees, clamped to ±89
+    float      camOrbDist   =  15.0f;   // world units (separate from ofParameter)
+
+    // Parameters — camera clip planes
+    ofParameter<float> camNear;
+    ofParameter<float> camFar;
+
+    // Parameter listeners
+    ofEventListeners parameterListeners;
+
+    // Parameters — gizmos
+    ofParameter<bool>  drawFloor;
+    ofParameter<bool>  drawAxis;
+
+    // Parameters — window
+    ofParameter<bool>  showWindow;
+
+    // Parameters — rendering
+    ofParameter<bool>  renderLikeUnity;
+    ofParameter<float> brightness;
+
+    // Polish / guard state
+    bool   disableUpdate = false;
+};
+
+#endif /* laserSimulator_h */

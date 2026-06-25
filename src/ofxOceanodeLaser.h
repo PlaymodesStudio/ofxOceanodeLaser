@@ -11,6 +11,7 @@
 #include "ildaController.h"
 #include "ildaProjector.h"
 #include "ildaShape.h"
+#include "laserSimulator.h"
 #include "polyOscSender.h"
 #include "ofxOceanodeOSCController.h"
 
@@ -68,6 +69,7 @@ namespace ofxOceanodeLaser{
 static void registerModels(ofxOceanode &o, shared_ptr<ildaController> ildaController){
     o.registerModel<ildaProjector>("ILDA", ildaController);
     o.registerModel<ildaShape>("ILDA", ildaController);
+    o.registerModel<laserSimulator>("ILDA", ildaController);
     o.registerModel<polyOscSender>("ILDA", o.getController<ofxOceanodeOSCController>());
     o.registerModel<ildaDebugger>("ILDA", ildaController);
 }

@@ -51,13 +51,18 @@ public:
                     float colorSum = std::accumulate(colors.begin(), colors.end(), 0.0f, [](float current_sum, ofColor const& value) { return current_sum + std::max(value.r, std::max(value.g, value.b));});
 
                     if (sendBlackShapes || colorSum > (blackThreshold * 255 * fat.size())){
-						if (fat.size() == 1) {
-							controller->getManager().drawDot(fat.getVertices()[0], colors[0], 1, options[renderProfile]);
-						}
-						else {
-							controller->getManager().drawPoly((ofPolyline)fat, colors, options[renderProfile]);
-						}
-					}
+                        // Feed the simulator buffer with the same data that goes to the laser.
+                        // Must be called before drawDot/drawPoly so the frame stamp is updated
+                        // on the first shape of the frame regardless of draw order.
+                        controller->publishLaserShape(fat, colors);
+
+      if (fat.size() == 1) {
+       controller->getManager().drawDot(fat.getVertices()[0], colors[0], 1, options[renderProfile]);
+      }
+      else {
+       controller->getManager().drawPoly((ofPolyline)fat, colors, options[renderProfile]);
+      }
+     }
 				}
 			}
         });
