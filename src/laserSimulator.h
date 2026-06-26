@@ -3,7 +3,9 @@
 //  ofxOceanodeLaser
 //
 //  Renders a real-time 3D simulation of all ILDA laser shapes currently
-//  being sent to the laser, inside an ImGui window hosting a 2048x2048 FBO.
+//  being sent to the laser, inside an ImGui window with a dynamic FBO.
+//  The FBO starts at 1024x1024 and is reallocated to the smallest of
+//  the ImGui window's content width/height whenever the window is resized.
 //
 //  Capture mechanism: ildaShape calls controller->publishLaserShape() for
 //  every fatline that passes the black-threshold test, pushing a flat
@@ -38,25 +40,26 @@ public:
     void setup() override {
 
         // --- Projection ---
-        addParameter(sphericalProjection.set("Spherical Proj", false));
-        addParameter(fovX.set("FOV X",     40.0f,  1.0f, 120.0f));
-        addParameter(fovY.set("FOV Y",     40.0f,  1.0f, 120.0f));
-        addParameter(nearWidth.set("Near Width", 0.05f, 0.0f, 2.0f));
+		addParameter(nearWidth.set("Near Width", 0.0f, 0.0f, 2.0f));
+		addParameter(sphericalProjection.set("Spherical Proj", true));
+        addParameter(fovX.set("FOV X",     60.0f,  1.0f, 120.0f));
+        addParameter(fovY.set("FOV Y",     60.0f,  1.0f, 120.0f));
         addParameter(offsetX.set("Offset X",  0.0f, -1.0f, 1.0f));
         addParameter(offsetY.set("Offset Y",  0.0f, -1.0f, 1.0f));
-        addParameter(laserDistance.set("Laser Dist", 8.0f, 0.1f, 50.0f));
+        addParameter(laserDistance.set("Laser Dist", 5.0f, 0.1f, 50.0f));
 
         // --- Scene geometry ---
-        addParameter(floorThickness.set("Floor Thick",    0.04f, 0.0f, 1.0f));
-        addParameter(pointCylinderSize.set("Dot Cyl Size",  0.04f, 0.0f, 1.0f));
-        addParameter(pointProjectionSize.set("Dot Proj Size", 0.04f, 0.0f, 2.0f));
-        addParameter(pointCylinderRes.set("Dot Cyl Res",  6, 3, 16));
-        addParameter(pointProjectionRes.set("Dot Proj Res", 6, 3, 16));
+        addParameter(floorThickness.set("Floor Thick",    0.05f, 0.0f, 1.0f));
+        addParameter(pointCylinderSize.set("Dot Cyl Size",  0.05f, 0.0f, 1.0f));
+        addParameter(pointProjectionSize.set("Dot Proj Size", 0.1f, 0.0f, 2.0f));
+  addParameter(pointCylinderRes.set("Dot Cyl Res",  8, 3, 32));
+        addParameter(pointProjectionRes.set("Dot Proj Res", 8, 3, 32));
+        addParameter(gridCurveRes.set("Grid Curve Res", 32, 2, 128));
 
         // --- Camera ---
         // Orbit/distance driven by mouse; Near/Far exposed as adjustable params.
         addParameter(camNear.set("Cam Near", 0.01f,  0.001f,  10.0f));
-        addParameter(camFar.set("Cam Far",  10.0f, 10.0f,  100.0f));
+        addParameter(camFar.set("Cam Far",  30.0f, 10.0f,  100.0f));
 
         easyCam.disableMouseInput();
         easyCam.setNearClip(camNear);
@@ -75,29 +78,22 @@ public:
         }));
 
         // --- Gizmos ---
-        addParameter(drawFloor.set("Draw Floor", true));
-        addParameter(drawAxis.set("Draw Axis",   true));
+        addParameter(drawFloor.set("Grid",    true));
+        addParameter(drawAxis.set("Axis",     true));
+        addParameter(drawFrustum.set("Frustum", false));
 
         // --- Window ---
         addParameter(showWindow.set("Show", true));
 
+        // --- Output ---
+        addParameter(textureOut.set("Texture", nullptr, nullptr, nullptr));
+
         // --- Rendering ---
         //addParameter(renderLikeUnity.set("RenderLikeUnity", true));
-        addParameter(brightness.set("Brightness", 0.75f, 0.0f, 10.0f));
+        addParameter(brightness.set("Brightness", 0.75f, 0.0f, 1.0f));
 
-        // Allocate FBO once at 2048x2048 with depth
-        ofFboSettings fboSettings;
-        fboSettings.width           = FBO_SIZE;
-        fboSettings.height          = FBO_SIZE;
-        fboSettings.internalformat  = GL_RGBA;
-        fboSettings.useDepth        = true;
-        fboSettings.useStencil      = false;
-        fboSettings.numSamples      = 0;
-        fbo.allocate(fboSettings);
-
-        fbo.begin();
-        ofClear(0, 0, 0, 255);
-        fbo.end();
+        // Allocate FBO at initial size; will be reallocated on window resize
+        reallocFbo(currentFboSize);
     }
 
     // ------------------------------------------------------------------
@@ -155,10 +151,14 @@ public:
             if (ImGui::SmallButton("[||]")) viewMode = 1;   // Top / flat
             ImGui::PopStyleColor();
 
-            // ---- FBO image ---------------------------------------------
+            // ---- FBO image — resize FBO when the window changes size ----
             float winW = ImGui::GetContentRegionAvail().x;
             float winH = ImGui::GetContentRegionAvail().y;
             float sz   = std::max(std::min(winW, winH), 100.0f);
+            int   newSize = (int)sz;
+            if (newSize != currentFboSize) {
+                reallocFbo(newSize);
+            }
             // Flip UV Y: oF FBO origin = bottom-left, ImGui expects top-left
             ImGui::Image(texId, ImVec2(sz, sz), ImVec2(0, 1), ImVec2(1, 0));
 
@@ -186,7 +186,6 @@ private:
     // ------------------------------------------------------------------
     // Constants
     // ------------------------------------------------------------------
-    static constexpr int   FBO_SIZE  = 2048;
     static constexpr int   STRIDE    = 5;  // x, y, r, g, b per vertex
 
     // ------------------------------------------------------------------
@@ -241,16 +240,24 @@ private:
         float ox  = (float)offsetX;
         float oy  = (float)offsetY;
         if (sphericalProjection) {
-            // Direction fires downward (−Z) with angular spread (pre-swap coords)
-            glm::vec3 dir( sinf(angX) * cosf(angY),
-                           cosf(angX) * sinf(angY),
+            // Two-axis galvo model: X mirror rotates around Y, then Y mirror
+            // rotates around the (already-tilted) X axis.
+            // dir = Ry(angX) * Rx(angY) * (0,0,-1)
+            // → already a unit vector; normalize() kept as safety guard.
+            glm::vec3 dir( sinf(angX),
+                           sinf(angY) * cosf(angX),
                           -cosf(angX) * cosf(angY));
             dir = glm::normalize(dir);
             float t = (fabsf(dir.z) > 1e-6f) ? LD / fabsf(dir.z) : LD;
             return swapYZ(glm::vec3(ox, oy, LD) + dir * t);
         } else {
-            // Planar (pre-swap): hit.z = 0, hit.x = ox+angX*LD, hit.y = oy+angY*LD
-            return swapYZ(glm::vec3(ox + angX * LD, oy + angY * LD, 0.0f));
+            // Planar: beam tilted angX/angY from straight-down (-Z).
+            // Floor hit = origin + tan(angle) * LD per axis.
+            // Must use tan() so that corners (±halfFOV) reach the frustum
+            // boundary computed in drawFloorGrid() with tan(halfFOV)*LD.
+            return swapYZ(glm::vec3(ox + tanf(angX) * LD,
+                                    oy + tanf(angY) * LD,
+                                    0.0f));
         }
     }
 
@@ -273,10 +280,8 @@ private:
     void addCylinder(ofMesh& mesh,
                      const glm::vec3& origin, const glm::vec3& proj,
                      const ofFloatColor& col) const {
-        int   cylRes  = pointCylinderRes;
-        float cylR    = pointCylinderSize * 0.5f;
-        int   discRes = pointProjectionRes;
-        float discR   = pointProjectionSize * 0.5f;
+        int   cylRes = pointCylinderRes;
+        float cylR   = pointCylinderSize * 0.5f;
 
         // Beam axis direction (normalised)
         glm::vec3 axis = glm::normalize(proj - origin);
@@ -288,7 +293,6 @@ private:
         glm::vec3 up    = glm::cross(axis, right);
 
         // ---- Cylinder wall (quad strip around the tube) ----
-        uint32_t base = (uint32_t)mesh.getNumVertices();
         for (int i = 0; i < cylRes; ++i) {
             float a0 = (float)i       / (float)cylRes * TWO_PI;
             float a1 = (float)(i + 1) / (float)cylRes * TWO_PI;
@@ -305,25 +309,7 @@ private:
             mesh.addIndex(vi+1); mesh.addIndex(vi+0); mesh.addIndex(vi+2);
             mesh.addIndex(vi+2); mesh.addIndex(vi+3); mesh.addIndex(vi+1);
         }
-
-        // ---- Projection disc (fan at `proj`) ----
-        uint32_t centerIdx = (uint32_t)mesh.getNumVertices();
-        mesh.addVertex(proj); mesh.addColor(col); // center
-
-        for (int i = 0; i <= discRes; ++i) {
-            float a = (float)i / (float)discRes * TWO_PI;
-            glm::vec3 off = (right * cosf(a) + up * sinf(a)) * discR;
-            mesh.addVertex(proj + off); mesh.addColor(col);
-        }
-
-        for (int i = 0; i < discRes; ++i) {
-            uint32_t va = centerIdx + 1 + i;
-            uint32_t vb = centerIdx + 1 + (i + 1) % discRes;
-            mesh.addIndex(centerIdx);
-            mesh.addIndex(va);
-            mesh.addIndex(vb);
-        }
-        (void)base;
+        // Floor-plane disc is handled separately by addFloorDisc() in Pass 2.
     }
 
     // ------------------------------------------------------------------
@@ -516,30 +502,109 @@ private:
     }
 
     // ------------------------------------------------------------------
-    // Floor grid: 4 × 4 cells spanning the full laser frustum footprint
-    // at Y=0 (floor plane, after swapYZ).
+    // Helper: project a polyline defined in angle-space through
+    // computeProjected() and draw it as a series of line segments.
+    // Resolution is controlled by the caller via the `samples` parameter
+    // (exposed to the user as the "Grid Curve Res" ofParameter).
+    // ------------------------------------------------------------------
+    void drawProjectedLine(float ax0, float ay0,
+                           float ax1, float ay1,
+                           int   samples) const {
+        glm::vec3 prev = computeProjected(ax0, ay0);
+        for (int s = 1; s <= samples; ++s) {
+            float t  = (float)s / (float)samples;
+            float ax = ax0 + (ax1 - ax0) * t;
+            float ay = ay0 + (ay1 - ay0) * t;
+            glm::vec3 curr = computeProjected(ax, ay);
+            ofDrawLine(prev, curr);
+            prev = curr;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Floor grid: 4 × 4 cells.
     //
-    // The footprint half-extents are:
-    //   X: tan(FOV_X/2) × LaserDistance
-    //   Z: tan(FOV_Y/2) × LaserDistance   (Z in render = old ILDA Y pan)
+    // Planar mode: lines are perfectly straight, drawn as two direct
+    //   ofDrawLine() calls per axis — the grid is a clean square.
     //
-    // 5 lines per axis → 4 cells.
+    // Spherical mode: lines are defined in angle-space and projected
+    //   through computeProjected() so galvo barrel distortion is shown.
+    //   Vertical lines (constant angX) bow outward; horizontal rows
+    //   (constant angY) stay straight. Resolution = "Grid Curve Res".
     // ------------------------------------------------------------------
     void drawFloorGrid() const {
-        const int   N      = 5;   // 5 lines → 4 cells
-        float LD           = (float)laserDistance;
-        float halfX        = tanf(ofDegToRad((float)fovX * 0.5f)) * LD;
-        float halfZ        = tanf(ofDegToRad((float)fovY * 0.5f)) * LD;
+        const int N = 5;   // 5 lines per axis → 4 cells
 
         ofSetColor(60, 60, 80, 200);
         ofSetLineWidth(1.0f);
 
-        for (int i = 0; i < N; ++i) {
-            float tx = ofMap(i, 0, N - 1, -halfX, halfX);
-            float tz = ofMap(i, 0, N - 1, -halfZ, halfZ);
-            // Lines on Y=0 plane
-            ofDrawLine(glm::vec3(-halfX, 0, tz), glm::vec3(halfX, 0, tz)); // parallel to X axis
-            ofDrawLine(glm::vec3(tx, 0, -halfZ), glm::vec3(tx, 0,  halfZ)); // parallel to Z axis
+        if (!sphericalProjection) {
+            // Planar: simple square grid at tan(halfFOV)*LD
+            float LD    = (float)laserDistance;
+            float halfX = tanf(ofDegToRad((float)fovX * 0.5f)) * LD;
+            float halfZ = tanf(ofDegToRad((float)fovY * 0.5f)) * LD;
+            for (int i = 0; i < N; ++i) {
+                float tx = ofMap(i, 0, N - 1, -halfX, halfX);
+                float tz = ofMap(i, 0, N - 1, -halfZ, halfZ);
+                ofDrawLine(glm::vec3(-halfX, 0, tz), glm::vec3(halfX, 0, tz));
+                ofDrawLine(glm::vec3(tx, 0, -halfZ), glm::vec3(tx, 0,  halfZ));
+            }
+        } else {
+            // Spherical: sample through computeProjected() to show curvature
+            int   res = gridCurveRes;
+            float aX  = ofDegToRad((float)fovX) * 0.5f;
+            float aY  = ofDegToRad((float)fovY) * 0.5f;
+            float ox  = ofDegToRad((float)offsetX);
+            float oy  = ofDegToRad((float)offsetY);
+            float minAX = ox - aX,  maxAX = ox + aX;
+            float minAY = oy - aY,  maxAY = oy + aY;
+
+            for (int i = 0; i < N; ++i) {
+                float ay = ofMap(i, 0, N - 1, minAY, maxAY);
+                drawProjectedLine(minAX, ay, maxAX, ay, res);  // horizontal row
+            }
+            for (int i = 0; i < N; ++i) {
+                float ax = ofMap(i, 0, N - 1, minAX, maxAX);
+                drawProjectedLine(ax, minAY, ax, maxAY, res);  // vertical column
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Frustum outline: boundary of the laser FOV on the floor.
+    //
+    // Planar mode: a simple rectangle — 4 straight ofDrawLine() calls.
+    //
+    // Spherical mode: 4 edges sampled through computeProjected() so the
+    //   left/right edges visibly bow outward (real galvo behaviour).
+    // ------------------------------------------------------------------
+    void drawFrustumOutline() const {
+        ofSetColor(180, 180, 80, 220);
+        ofSetLineWidth(2.0f);
+
+        if (!sphericalProjection) {
+            // Planar: simple rectangle
+            float LD    = (float)laserDistance;
+            float halfX = tanf(ofDegToRad((float)fovX * 0.5f)) * LD;
+            float halfZ = tanf(ofDegToRad((float)fovY * 0.5f)) * LD;
+            ofDrawLine(glm::vec3(-halfX, 0, -halfZ), glm::vec3( halfX, 0, -halfZ)); // bottom
+            ofDrawLine(glm::vec3(-halfX, 0,  halfZ), glm::vec3( halfX, 0,  halfZ)); // top
+            ofDrawLine(glm::vec3(-halfX, 0, -halfZ), glm::vec3(-halfX, 0,  halfZ)); // left
+            ofDrawLine(glm::vec3( halfX, 0, -halfZ), glm::vec3( halfX, 0,  halfZ)); // right
+        } else {
+            // Spherical: sample each edge through computeProjected()
+            int   res = gridCurveRes;
+            float aX  = ofDegToRad((float)fovX) * 0.5f;
+            float aY  = ofDegToRad((float)fovY) * 0.5f;
+            float ox  = ofDegToRad((float)offsetX);
+            float oy  = ofDegToRad((float)offsetY);
+            float minAX = ox - aX,  maxAX = ox + aX;
+            float minAY = oy - aY,  maxAY = oy + aY;
+
+            drawProjectedLine(minAX, minAY, maxAX, minAY, res); // bottom
+            drawProjectedLine(minAX, maxAY, maxAX, maxAY, res); // top
+            drawProjectedLine(minAX, minAY, minAX, maxAY, res); // left
+            drawProjectedLine(maxAX, minAY, maxAX, maxAY, res); // right
         }
     }
 
@@ -568,7 +633,7 @@ private:
         ofClear(0, 0, 0, 255);
 
         if (viewMode == 1) {
-			renderLikeUnity = false;
+			renderLikeUnity = true;
             // ---- Top view: use easyCam with orbit() straight above floor ---
             // orbitAz=0, orbitEl=90 puts the camera directly above (0, Y, 0).
             // This reuses the proven easyCam path used by Perspective mode.
@@ -582,11 +647,12 @@ private:
             glm::vec3 orbitCenter(0.0f, -LD * 0.5f, 0.0f);
             easyCam.orbit(0.01f, 89.99f, LD * 0.50f, orbitCenter);
 
-            easyCam.begin(ofRectangle(0, 0, FBO_SIZE, FBO_SIZE));
+            easyCam.begin(ofRectangle(0, 0, currentFboSize, currentFboSize));
 
             ofEnableDepthTest();
-            if (drawFloor) drawFloorGrid();
-            if (drawAxis)  drawAxes();
+            if (drawFloor)   drawFloorGrid();
+            if (drawAxis)    drawAxes();
+            if (drawFrustum) drawFrustumOutline();
 
             // Top view: only floor mesh (laser footprint on the floor)
             if (renderLikeUnity) {
@@ -609,12 +675,13 @@ private:
         } else {
 			renderLikeUnity = true;
             // ---- Perspective view: easyCam orbit -------------------------
-            easyCam.begin(ofRectangle(0, 0, FBO_SIZE, FBO_SIZE));
+            easyCam.begin(ofRectangle(0, 0, currentFboSize, currentFboSize));
 
         ofEnableDepthTest();
 
-        if (drawFloor) drawFloorGrid();
-        if (drawAxis)  drawAxes();
+        if (drawFloor)   drawFloorGrid();
+        if (drawAxis)    drawAxes();
+        if (drawFrustum) drawFrustumOutline();
 
         if (renderLikeUnity) {
             // ---------------------------------------------------
@@ -653,6 +720,26 @@ private:
         } // end else (perspective view)
 
         fbo.end();
+        if (fbo.isAllocated()) textureOut = &fbo.getTexture();
+    }
+
+    // ------------------------------------------------------------------
+    // Helper: allocate (or reallocate) the FBO at the given square size.
+    // Clears to black after allocation.
+    // ------------------------------------------------------------------
+    void reallocFbo(int size) {
+        currentFboSize = size;
+        ofFboSettings fboSettings;
+        fboSettings.width          = size;
+        fboSettings.height         = size;
+        fboSettings.internalformat = GL_RGBA;
+        fboSettings.useDepth       = true;
+        fboSettings.useStencil     = false;
+        fboSettings.numSamples     = 8;
+        fbo.allocate(fboSettings);
+        fbo.begin();
+        ofClear(0, 0, 0, 255);
+        fbo.end();
     }
 
     // ------------------------------------------------------------------
@@ -661,6 +748,7 @@ private:
     shared_ptr<ildaController> controller;
 
     ofFbo      fbo;
+    int        currentFboSize = 1024;  // tracks current square FBO dimension
     ofVboMesh  beamMesh;   // GPU-resident for faster draw calls each frame
     ofVboMesh  floorMesh;
 
@@ -682,6 +770,7 @@ private:
     ofParameter<float> pointProjectionSize;
     ofParameter<int>   pointCylinderRes;
     ofParameter<int>   pointProjectionRes;
+    ofParameter<int>   gridCurveRes;
 
     // Camera — ofEasyCam with manual ImGui orbit input
     ofEasyCam  easyCam;
@@ -699,9 +788,13 @@ private:
     // Parameters — gizmos
     ofParameter<bool>  drawFloor;
     ofParameter<bool>  drawAxis;
+    ofParameter<bool>  drawFrustum;
 
     // Parameters — window
     ofParameter<bool>  showWindow;
+
+    // Parameters — output
+    ofParameter<ofTexture*> textureOut;
 
     // Parameters — rendering
     ofParameter<bool>  renderLikeUnity;
