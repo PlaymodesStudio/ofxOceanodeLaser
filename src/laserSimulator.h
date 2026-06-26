@@ -56,15 +56,15 @@ public:
         // --- Camera ---
         // Orbit/distance driven by mouse; Near/Far exposed as adjustable params.
         addParameter(camNear.set("Cam Near", 0.01f,  0.001f,  10.0f));
-        addParameter(camFar.set("Cam Far",  500.0f, 10.0f,  5000.0f));
+        addParameter(camFar.set("Cam Far",  10.0f, 10.0f,  100.0f));
 
         easyCam.disableMouseInput();
         easyCam.setNearClip(camNear);
         easyCam.setFarClip(camFar);
-        glm::vec3 orbitCenter(0.0f, 0.0f, (float)laserDistance.get() * 0.5f);
+        // After swapYZ with negation: laser head is at Y = -laserDistance.
+        // Orbit center is halfway between floor (Y=0) and laser head (Y=-LD).
+        glm::vec3 orbitCenter(0.0f, -(float)laserDistance.get() * 0.5f, 0.0f);
         easyCam.orbit(camAzimuth, camElevation, camOrbDist, orbitCenter);
-		easyCam.setRelativeYAxis(false);
-		easyCam.setUpAxis(glm::vec3(0,0,1));
 		
         // Update clip planes when params change
         parameterListeners.push(camNear.newListener([this](float &v){
@@ -82,7 +82,7 @@ public:
         addParameter(showWindow.set("Show", true));
 
         // --- Rendering ---
-        addParameter(renderLikeUnity.set("RenderLikeUnity", true));
+        //addParameter(renderLikeUnity.set("RenderLikeUnity", true));
         addParameter(brightness.set("Brightness", 0.75f, 0.0f, 10.0f));
 
         // Allocate FBO once at 2048x2048 with depth
@@ -96,7 +96,7 @@ public:
         fbo.allocate(fboSettings);
 
         fbo.begin();
-        ofClear(10, 10, 20, 255);
+        ofClear(0, 0, 0, 255);
         fbo.end();
     }
 
@@ -133,41 +133,52 @@ public:
 
         ImTextureID texId = (ImTextureID)(uintptr_t)fbo.getTexture().getTextureData().textureID;
 
-        ImGui::SetNextWindowSize(ImVec2(600, 620), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(600, 660), ImGuiCond_FirstUseEver);
         bool windowOpen = showWindow.get();
         if (ImGui::Begin("Laser Simulator##laserSimWin",
                          &windowOpen,
                          ImGuiWindowFlags_NoFocusOnAppearing)) {
+
+            // ---- View mode buttons (perspective / top) ------------------
+            // Highlight the active button with a tinted colour.
+            ImVec4 activeCol  = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
+            ImVec4 normalCol  = ImGui::GetStyle().Colors[ImGuiCol_Button];
+
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                viewMode == 0 ? activeCol : normalCol);
+            if (ImGui::SmallButton("[^]")) viewMode = 0;   // Perspective
+            ImGui::PopStyleColor();
+
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                viewMode == 1 ? activeCol : normalCol);
+            if (ImGui::SmallButton("[||]")) viewMode = 1;   // Top / flat
+            ImGui::PopStyleColor();
+
+            // ---- FBO image ---------------------------------------------
             float winW = ImGui::GetContentRegionAvail().x;
             float winH = ImGui::GetContentRegionAvail().y;
             float sz   = std::max(std::min(winW, winH), 100.0f);
             // Flip UV Y: oF FBO origin = bottom-left, ImGui expects top-left
             ImGui::Image(texId, ImVec2(sz, sz), ImVec2(0, 1), ImVec2(1, 0));
 
-            // ---- Interactive orbit via ImGui mouse input ----------------
-            // Only handle input when the mouse is over this image widget.
-            if (ImGui::IsItemHovered()) {
+            // ---- Interactive input (perspective mode only) ---------------
+            if (viewMode == 0 && ImGui::IsItemHovered()) {
                 const ImGuiIO& io = ImGui::GetIO();
-
-                // Left-drag → orbit (azimuth / elevation)
                 if (io.MouseDown[0]) {
                     camAzimuth   -= io.MouseDelta.x * 0.4f;
                     camElevation -= io.MouseDelta.y * 0.4f;
                     camElevation  = ofClamp(camElevation, -89.0f, 89.0f);
                 }
-                // Scroll wheel → zoom (cam distance)
                 if (io.MouseWheel != 0.0f) {
                     camOrbDist -= io.MouseWheel * 0.5f;
                     camOrbDist  = std::max(camOrbDist, 0.5f);
                 }
-
-                // Apply to easyCam — orbit around beam midpoint
-                glm::vec3 orbitCenter(0.0f, 0.0f, (float)laserDistance * 0.5f);
+                glm::vec3 orbitCenter(0.0f, -(float)laserDistance * 0.5f, 0.0f);
                 easyCam.orbit(camAzimuth, camElevation, camOrbDist, orbitCenter);
             }
         }
         ImGui::End();
-        // Sync ImGui close-button click back to the Oceanode parameter
         if (!windowOpen) showWindow = false;
     }
 
@@ -177,6 +188,24 @@ private:
     // ------------------------------------------------------------------
     static constexpr int   FBO_SIZE  = 2048;
     static constexpr int   STRIDE    = 5;  // x, y, r, g, b per vertex
+
+    // ------------------------------------------------------------------
+    // Coordinate remap (applied to every geometry output point):
+    //   ILDA/logic space  →  world render space
+    //   X                 →  X   (unchanged)
+    //   old Y (ILDA pan)  →  new Z
+    //   old Z (height/LD) →  new -Y  ← negate because ImGui UV flip
+    //                                    (uv0=(0,1),uv1=(1,0)) inverts
+    //                                    the displayed Y direction, so
+    //                                    we pre-negate to make the laser
+    //                                    head appear at the top visually.
+    //
+    // Floor (old Z=0) → new Y=0  (XZ plane)  — unchanged
+    // Laser head (old (ox,oy,LD)) → new (ox, -LD, oy)  — at visual top
+    // ------------------------------------------------------------------
+    static glm::vec3 swapYZ(const glm::vec3& v) {
+        return glm::vec3(v.x, -v.z, v.y);
+    }
 
     // ------------------------------------------------------------------
     // Helper: is the vertex at `idx` an isolated single point?
@@ -212,17 +241,16 @@ private:
         float ox  = (float)offsetX;
         float oy  = (float)offsetY;
         if (sphericalProjection) {
-            // Direction fires downward (−Z) with angular spread
+            // Direction fires downward (−Z) with angular spread (pre-swap coords)
             glm::vec3 dir( sinf(angX) * cosf(angY),
                            cosf(angX) * sinf(angY),
-                          -cosf(angX) * cosf(angY));   // −Z is downward
+                          -cosf(angX) * cosf(angY));
             dir = glm::normalize(dir);
-            // Intersect with Z=0 plane: origin.z + dir.z * t = 0 → t = LD / |dir.z|
             float t = (fabsf(dir.z) > 1e-6f) ? LD / fabsf(dir.z) : LD;
-            return glm::vec3(ox, oy, LD) + dir * t;
+            return swapYZ(glm::vec3(ox, oy, LD) + dir * t);
         } else {
-            // Planar: beam spread proportional to height (laserDistance)
-            return glm::vec3(ox + angX * LD, oy + angY * LD, 0.0f);
+            // Planar (pre-swap): hit.z = 0, hit.x = ox+angX*LD, hit.y = oy+angY*LD
+            return swapYZ(glm::vec3(ox + angX * LD, oy + angY * LD, 0.0f));
         }
     }
 
@@ -311,9 +339,10 @@ private:
         uint32_t centerIdx = (uint32_t)mesh.getNumVertices();
         mesh.addVertex(center); mesh.addColor(col);
 
+        // Floor disc lies on Y=0 plane → spread in X and Z
         for (int i = 0; i <= res; ++i) {
             float a = (float)i / (float)res * TWO_PI;
-            glm::vec3 off(cosf(a) * r, sinf(a) * r, 0.0f);
+            glm::vec3 off(cosf(a) * r, 0.0f, sinf(a) * r);
             mesh.addVertex(center + off); mesh.addColor(col);
         }
         for (int i = 0; i < res; ++i) {
@@ -372,12 +401,11 @@ private:
                 float angY = p0Y * aY + oy;
 
                 glm::vec3 proj   = computeProjected(angX, angY);
-                // Laser head (origin) is at (offsetX, offsetY, laserDistance).
-                // NearWidth adds a slight spread around the head position for
-                // visual beam-width effect at the source.
-                glm::vec3 origin((float)offsetX + p0X * NW,
-                                 (float)offsetY + p0Y * NW,
-                                 (float)laserDistance);
+                // Laser head at (offsetX, offsetY, laserDistance) in pre-swap coords
+                // → swapYZ → (offsetX, laserDistance, offsetY) in render coords
+                glm::vec3 origin = swapYZ(glm::vec3((float)offsetX + p0X * NW,
+                                                    (float)offsetY + p0Y * NW,
+                                                    (float)laserDistance));
 
                 bool bSingle = isSinglePoint(data, idx);
 
@@ -431,8 +459,8 @@ private:
                 float angY = p0Y * aY + oy;
 
                 glm::vec3 proj = computeProjected(angX, angY);
-                // Floor footprint = same XY as projection, projected to Z=0
-                glm::vec3 fp(proj.x, proj.y, 0.0f);
+                // After swapYZ: floor is Y=0. Force Y=0, keep X and Z.
+                glm::vec3 fp(proj.x, 0.0f, proj.z);
 
                 bool bSingle = isSinglePoint(data, idx);
 
@@ -455,10 +483,10 @@ private:
                     float a1X = p1X * aX + ox;
                     float a1Y = p1Y * aY + oy;
                     glm::vec3 proj1 = computeProjected(a1X, a1Y);
-                    glm::vec3 fp1(proj1.x, proj1.y, 0.0f);
+                    glm::vec3 fp1(proj1.x, 0.0f, proj1.z);  // floor is Y=0
 
-                    // Perpendicular in the XY/floor plane
-                    glm::vec2 seg   = glm::vec2(fp1.x - fp.x, fp1.y - fp.y);
+                    // Perpendicular in the XZ floor plane (Y=0)
+                    glm::vec2 seg   = glm::vec2(fp1.x - fp.x, fp1.z - fp.z);
                     float     segLen = glm::length(seg);
                     if (segLen > 1e-6f) {
                         glm::vec2 perp = glm::normalize(glm::vec2(-seg.y, seg.x))
@@ -466,14 +494,14 @@ private:
 
                         uint32_t vi = (uint32_t)floorMesh.getNumVertices();
 
-                        // 4 vertices: fp-perp, fp+perp, fp1-perp, fp1+perp (all Z=0)
-                        floorMesh.addVertex(glm::vec3(fp.x  - perp.x, fp.y  - perp.y, 0));
+                        // 4 vertices on floor (Y=0): perp in X and Z
+                        floorMesh.addVertex(glm::vec3(fp.x  - perp.x, 0, fp.z  - perp.y));
                         floorMesh.addColor(col);
-                        floorMesh.addVertex(glm::vec3(fp.x  + perp.x, fp.y  + perp.y, 0));
+                        floorMesh.addVertex(glm::vec3(fp.x  + perp.x, 0, fp.z  + perp.y));
                         floorMesh.addColor(col);
-                        floorMesh.addVertex(glm::vec3(fp1.x - perp.x, fp1.y - perp.y, 0));
+                        floorMesh.addVertex(glm::vec3(fp1.x - perp.x, 0, fp1.z - perp.y));
                         floorMesh.addColor(col1);
-                        floorMesh.addVertex(glm::vec3(fp1.x + perp.x, fp1.y + perp.y, 0));
+                        floorMesh.addVertex(glm::vec3(fp1.x + perp.x, 0, fp1.z + perp.y));
                         floorMesh.addColor(col1);
 
                         floorMesh.addIndex(vi+1); floorMesh.addIndex(vi+0); floorMesh.addIndex(vi+2);
@@ -488,34 +516,48 @@ private:
     }
 
     // ------------------------------------------------------------------
-    // Floor grid: 5 lines per axis → 4 cells; span = 10 × 10 on Z=0
+    // Floor grid: 4 × 4 cells spanning the full laser frustum footprint
+    // at Y=0 (floor plane, after swapYZ).
+    //
+    // The footprint half-extents are:
+    //   X: tan(FOV_X/2) × LaserDistance
+    //   Z: tan(FOV_Y/2) × LaserDistance   (Z in render = old ILDA Y pan)
+    //
+    // 5 lines per axis → 4 cells.
     // ------------------------------------------------------------------
     void drawFloorGrid() const {
-        const int   N      = 5;      // 5 lines ⇒ 4 cells per axis
-        const float extent = 5.0f;   // half-size → total span 10
+        const int   N      = 5;   // 5 lines → 4 cells
+        float LD           = (float)laserDistance;
+        float halfX        = tanf(ofDegToRad((float)fovX * 0.5f)) * LD;
+        float halfZ        = tanf(ofDegToRad((float)fovY * 0.5f)) * LD;
 
         ofSetColor(60, 60, 80, 200);
         ofSetLineWidth(1.0f);
 
         for (int i = 0; i < N; ++i) {
-            float t = ofMap(i, 0, N - 1, -extent, extent);
-            ofDrawLine(glm::vec3(-extent, t, 0), glm::vec3(extent, t, 0)); // along X
-            ofDrawLine(glm::vec3(t, -extent, 0), glm::vec3(t, extent, 0)); // along Y
+            float tx = ofMap(i, 0, N - 1, -halfX, halfX);
+            float tz = ofMap(i, 0, N - 1, -halfZ, halfZ);
+            // Lines on Y=0 plane
+            ofDrawLine(glm::vec3(-halfX, 0, tz), glm::vec3(halfX, 0, tz)); // parallel to X axis
+            ofDrawLine(glm::vec3(tx, 0, -halfZ), glm::vec3(tx, 0,  halfZ)); // parallel to Z axis
         }
     }
 
     // ------------------------------------------------------------------
-    // XYZ axis gizmo at origin (X=red, Y=green, Z=blue)
+    // XYZ axis gizmo  X=red, Y=green, Z=blue
+    // After swapYZ with negation, height (old Z) maps to -Y in render space,
+    // but appears as visual-UP after the ImGui UV flip.
+    // Draw the blue (height) line toward -Y so it visually points upward.
     // ------------------------------------------------------------------
     void drawAxes() const {
         const float len = 1.5f;
         ofSetLineWidth(2.0f);
         ofSetColor(ofColor::red);
-        ofDrawLine(glm::vec3(0,0,0), glm::vec3(len, 0, 0));
+        ofDrawLine(glm::vec3(0,0,0), glm::vec3( len, 0,    0));  // X → right
         ofSetColor(ofColor::green);
-        ofDrawLine(glm::vec3(0,0,0), glm::vec3(0, len, 0));
+        ofDrawLine(glm::vec3(0,0,0), glm::vec3(0,    0,  len));  // old Y → +Z
         ofSetColor(ofColor::blue);
-        ofDrawLine(glm::vec3(0,0,0), glm::vec3(0, 0, len));
+        ofDrawLine(glm::vec3(0,0,0), glm::vec3(0, -len,    0));  // old Z → -Y = visual up
     }
 
     // ------------------------------------------------------------------
@@ -523,9 +565,51 @@ private:
     // ------------------------------------------------------------------
     void renderToFbo() {
         fbo.begin();
-        ofClear(10, 10, 20, 255);
+        ofClear(0, 0, 0, 255);
 
-        easyCam.begin(ofRectangle(0, 0, FBO_SIZE, FBO_SIZE));
+        if (viewMode == 1) {
+			renderLikeUnity = false;
+            // ---- Top view: use easyCam with orbit() straight above floor ---
+            // orbitAz=0, orbitEl=90 puts the camera directly above (0, Y, 0).
+            // This reuses the proven easyCam path used by Perspective mode.
+            float LD  = (float)laserDistance;
+
+            // Temporarily override easyCam to a top-down position and distance
+            float savedAz  = camAzimuth;
+            float savedEl  = camElevation;
+            float savedDist = camOrbDist;
+
+            glm::vec3 orbitCenter(0.0f, -LD * 0.5f, 0.0f);
+            easyCam.orbit(0.01f, 89.99f, LD * 0.50f, orbitCenter);
+
+            easyCam.begin(ofRectangle(0, 0, FBO_SIZE, FBO_SIZE));
+
+            ofEnableDepthTest();
+            if (drawFloor) drawFloorGrid();
+            if (drawAxis)  drawAxes();
+
+            // Top view: only floor mesh (laser footprint on the floor)
+            if (renderLikeUnity) {
+                ofDisableDepthTest();
+                ofEnableAlphaBlending();
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+                ofSetColor(255);
+                floorMesh.draw();
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                ofEnableDepthTest();
+            } else {
+                ofDisableLighting();
+                ofSetColor(255);
+                floorMesh.draw();
+            }
+
+            easyCam.end();
+            // Restore perspective cam orbit for next perspective frame
+            easyCam.orbit(savedAz, savedEl, savedDist, orbitCenter);
+        } else {
+			renderLikeUnity = true;
+            // ---- Perspective view: easyCam orbit -------------------------
+            easyCam.begin(ofRectangle(0, 0, FBO_SIZE, FBO_SIZE));
 
         ofEnableDepthTest();
 
@@ -566,6 +650,8 @@ private:
         }
 
         easyCam.end();
+        } // end else (perspective view)
+
         fbo.end();
     }
 
@@ -577,6 +663,9 @@ private:
     ofFbo      fbo;
     ofVboMesh  beamMesh;   // GPU-resident for faster draw calls each frame
     ofVboMesh  floorMesh;
+
+    // View mode: 0 = Perspective (easyCam orbit), 1 = Top orthographic
+    int        viewMode = 0;
 
     // Parameters — projection
     ofParameter<bool>  sphericalProjection;
