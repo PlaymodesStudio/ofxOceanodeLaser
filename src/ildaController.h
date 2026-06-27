@@ -97,8 +97,6 @@ public:
         firstUpdate = true;
         
         freeze = false;
-        simulatorFrameStamp = UINT64_MAX; // force clear on first publishLaserShape call
-        
         pointDraggingIndex = -1;
         ofJson warpPointsJson = ofLoadJson("warpPoints.json");
         if(!warpPointsJson.empty()){
@@ -123,6 +121,12 @@ public:
     ~ildaController(){};
     
     void update(){
+        // Phase B: swap the write buffer (accumulated this frame by ildaShape
+        // publishers) into the read buffer for next frame's consumers, then
+        // clear the write buffer for the next frame's publishes.
+        std::swap(simulatorReadBuffer, simulatorWriteBuffer);
+        simulatorWriteBuffer.clear();
+
         laser.send();
 //        if(!freeze){
             laser.update();
@@ -513,27 +517,25 @@ public:
     // Simulator buffer — flat [x, y, r, g, b, ..., -1] per frame.
     // Mirrors the format sent by polyOscSender (x/y normalised by 800,
     // r/g/b in 0..1).  ildaShape calls this for every fatline it sends
-    // to the laser; the buffer is auto-cleared on the first call of each
-    // new oF frame so the laserSimulator node always gets fresh data.
+    // to the laser. This method is append-only: it writes into the
+    // simulatorWriteBuffer during Phase A (node updates). The controller's
+    // update() (Phase B) swaps write→read and clears the write buffer, so
+    // the laserSimulator always gets fresh data via getSimulatorData()
+    // (and renders nothing when no shapes publish this frame).
     // -------------------------------------------------------------------
     void publishLaserShape(const ofxFatLine& fat, const vector<ofColor>& colors) {
-        uint64_t currentFrame = static_cast<uint64_t>(ofGetFrameNum());
-        if (currentFrame != simulatorFrameStamp) {
-            latestSimulatorData.clear();
-            simulatorFrameStamp = currentFrame;
-        }
         for (int i = 0; i < (int)fat.size(); i++) {
-            latestSimulatorData.push_back(fat.getVertices()[i].x / 800.0f);
-            latestSimulatorData.push_back(fat.getVertices()[i].y / 800.0f);
-            latestSimulatorData.push_back(colors[i].r / 255.0f);
-            latestSimulatorData.push_back(colors[i].g / 255.0f);
-            latestSimulatorData.push_back(colors[i].b / 255.0f);
+            simulatorWriteBuffer.push_back(fat.getVertices()[i].x / 800.0f);
+            simulatorWriteBuffer.push_back(fat.getVertices()[i].y / 800.0f);
+            simulatorWriteBuffer.push_back(colors[i].r / 255.0f);
+            simulatorWriteBuffer.push_back(colors[i].g / 255.0f);
+            simulatorWriteBuffer.push_back(colors[i].b / 255.0f);
         }
-        latestSimulatorData.push_back(-1.0f);
+        simulatorWriteBuffer.push_back(-1.0f);
     }
 
     const vector<float>& getSimulatorData() const {
-        return latestSimulatorData;
+        return simulatorReadBuffer;
     }
 
     vector<ofxLaser::Point> getAllLaserPoints(){
@@ -581,9 +583,14 @@ private:
  bool freeze;
  bool firstUpdate;
 
-    // Simulator buffer (see publishLaserShape / getSimulatorData above)
-    vector<float>   latestSimulatorData;
-    uint64_t        simulatorFrameStamp;
+    // Double-buffered simulator data. Producers (ildaShape via publishLaserShape)
+    // append to simulatorWriteBuffer during Phase A (node updates). In Phase B
+    // (controller update), we swap write→read and clear the write buffer. The
+    // consumer (laserSimulator) reads simulatorReadBuffer during Phase A. This
+    // decouples producer/consumer from Oceanode's unordered node-update order
+    // and from the controller-runs-last ordering, with one frame of latency.
+    vector<float> simulatorWriteBuffer;
+    vector<float> simulatorReadBuffer;
 
     vector<glm::vec2> warpPoints;
     int pointDraggingIndex;

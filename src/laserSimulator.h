@@ -26,6 +26,8 @@
 #include "ofxOceanodeNodeModel.h"
 #include "ildaController.h"
 #include "ofMain.h"
+#include "ofxOceanodeColors.h"
+
 
 class laserSimulator : public ofxOceanodeNodeModel {
 public:
@@ -37,63 +39,63 @@ public:
     // ------------------------------------------------------------------
     // setup() — all parameter wiring lives here (never in the constructor)
     // ------------------------------------------------------------------
-    void setup() override {
+    void setup() override
+	{
+		// --- Projection --- (inspector-only: keeps the node GUI clean)
+		addInspectorParameter(nearWidth.set("Near Width", 0.0f, 0.0f, 2.0f));
+		addInspectorParameter(sphericalProjection.set("Spherical Proj", false));
+		addInspectorParameter(fovX.set("FOV X",     60.0f,  1.0f, 120.0f));
+		addInspectorParameter(fovY.set("FOV Y",     60.0f,  1.0f, 120.0f));
+		addInspectorParameter(offsetX.set("Offset X",  0.0f, -1.0f, 1.0f));
+		addInspectorParameter(offsetY.set("Offset Y",  0.0f, -1.0f, 1.0f));
+		addInspectorParameter(laserDistance.set("Laser Dist", 5.0f, 0.1f, 50.0f));
 
-        // --- Projection ---
-		addParameter(nearWidth.set("Near Width", 0.0f, 0.0f, 2.0f));
-		addParameter(sphericalProjection.set("Spherical Proj", true));
-        addParameter(fovX.set("FOV X",     60.0f,  1.0f, 120.0f));
-        addParameter(fovY.set("FOV Y",     60.0f,  1.0f, 120.0f));
-        addParameter(offsetX.set("Offset X",  0.0f, -1.0f, 1.0f));
-        addParameter(offsetY.set("Offset Y",  0.0f, -1.0f, 1.0f));
-        addParameter(laserDistance.set("Laser Dist", 5.0f, 0.1f, 50.0f));
+		// --- Scene geometry --- (inspector-only)
+		addInspectorParameter(floorThickness.set("Floor Thick",    0.025f, 0.0f, 1.0f));
+		addInspectorParameter(pointCylinderSize.set("Dot Cyl Size",  0.025f, 0.0f, 1.0f));
+		addInspectorParameter(pointProjectionSize.set("Dot Proj Size", 0.1f, 0.0f, 2.0f));
+		addInspectorParameter(pointCylinderRes.set("Dot Cyl Res",  8, 3, 32));
+		addInspectorParameter(pointProjectionRes.set("Dot Proj Res", 8, 3, 32));
+		addInspectorParameter(gridCurveRes.set("Grid Curve Res", 32, 2, 128));
 
-        // --- Scene geometry ---
-        addParameter(floorThickness.set("Floor Thick",    0.05f, 0.0f, 1.0f));
-        addParameter(pointCylinderSize.set("Dot Cyl Size",  0.05f, 0.0f, 1.0f));
-        addParameter(pointProjectionSize.set("Dot Proj Size", 0.1f, 0.0f, 2.0f));
-  addParameter(pointCylinderRes.set("Dot Cyl Res",  8, 3, 32));
-        addParameter(pointProjectionRes.set("Dot Proj Res", 8, 3, 32));
-        addParameter(gridCurveRes.set("Grid Curve Res", 32, 2, 128));
+		// --- Camera --- (inspector-only)
+		// Orbit/distance driven by mouse; Near/Far exposed as adjustable params.
+		addInspectorParameter(camNear.set("Cam Near", 0.01f,  0.001f,  10.0f));
+		addInspectorParameter(camFar.set("Cam Far",  30.0f, 10.0f,  100.0f));
 
-        // --- Camera ---
-        // Orbit/distance driven by mouse; Near/Far exposed as adjustable params.
-        addParameter(camNear.set("Cam Near", 0.01f,  0.001f,  10.0f));
-        addParameter(camFar.set("Cam Far",  30.0f, 10.0f,  100.0f));
-
-        easyCam.disableMouseInput();
-        easyCam.setNearClip(camNear);
-        easyCam.setFarClip(camFar);
-        // After swapYZ with negation: laser head is at Y = -laserDistance.
-        // Orbit center is halfway between floor (Y=0) and laser head (Y=-LD).
-        glm::vec3 orbitCenter(0.0f, -(float)laserDistance.get() * 0.5f, 0.0f);
-        easyCam.orbit(camAzimuth, camElevation, camOrbDist, orbitCenter);
+		easyCam.disableMouseInput();
+		easyCam.setNearClip(camNear);
+		easyCam.setFarClip(camFar);
+		// After swapYZ with negation: laser head is at Y = -laserDistance.
+		// Orbit center is halfway between floor (Y=0) and laser head (Y=-LD).
+		glm::vec3 orbitCenter(0.0f, -(float)laserDistance.get() * 0.5f, 0.0f);
+		easyCam.orbit(camAzimuth, camElevation, camOrbDist, orbitCenter);
 		
-        // Update clip planes when params change
-        parameterListeners.push(camNear.newListener([this](float &v){
-            easyCam.setNearClip(v);
-        }));
-        parameterListeners.push(camFar.newListener([this](float &v){
-            easyCam.setFarClip(v);
-        }));
+		// Update clip planes when params change
+		parameterListeners.push(camNear.newListener([this](float &v){
+			easyCam.setNearClip(v);
+		}));
+		parameterListeners.push(camFar.newListener([this](float &v){
+			easyCam.setFarClip(v);
+		}));
 
-        // --- Gizmos ---
-        addParameter(drawFloor.set("Grid",    true));
-        addParameter(drawAxis.set("Axis",     true));
-        addParameter(drawFrustum.set("Frustum", false));
+		// --- Gizmos --- (inspector-only)
+		addInspectorParameter(drawFloor.set("Grid",    false));
+		addInspectorParameter(drawAxis.set("Axis",     false));
+		addInspectorParameter(drawFrustum.set("Frustum", true));
 
-        // --- Window ---
-        addParameter(showWindow.set("Show", true));
+		// --- Window ---
+		addParameter(showWindow.set("Show", true));
 
-        // --- Output ---
-        addParameter(textureOut.set("Texture", nullptr, nullptr, nullptr));
+		// --- Output ---
+		addParameter(textureOut.set("Texture", nullptr, nullptr, nullptr));
 
-        // --- Rendering ---
-        //addParameter(renderLikeUnity.set("RenderLikeUnity", true));
-        addParameter(brightness.set("Brightness", 0.75f, 0.0f, 1.0f));
+		// --- Rendering --- (inspector-only)
+		//addInspectorParameter(renderLikeUnity.set("RenderLikeUnity", true));
+		addInspectorParameter(brightness.set("Brightness", 0.75f, 0.0f, 1.0f));
 
-        // Allocate FBO at initial size; will be reallocated on window resize
-        reallocFbo(currentFboSize);
+		// Allocate FBO at initial size; will be reallocated on window resize
+		reallocFbo(currentFboSize);
     }
 
     // ------------------------------------------------------------------
@@ -114,6 +116,32 @@ public:
     void update(ofEventArgs& /*args*/) override {
         if (disableUpdate) return;
         const vector<float>& data = controller->getSimulatorData();
+
+        // Compute debug counts from the buffer
+        debugVertexCount = 0;
+        debugShapeCount  = 0;
+        debugDotCount    = 0;
+        if (!data.empty()) {
+            int vertsInShape = 0;
+            for (int i = 0; i < (int)data.size(); ) {
+                if (data[i] == -1.0f) {
+                    debugShapeCount++;
+                    if (vertsInShape == 1) debugDotCount++;
+                    vertsInShape = 0;
+                    ++i;
+                    continue;
+                }
+                vertsInShape++;
+                debugVertexCount++;
+                i += STRIDE;  // STRIDE = 5
+            }
+            // Handle trailing shape without a -1 terminator (shouldn't happen, but safe)
+            if (vertsInShape > 0) {
+                debugShapeCount++;
+                if (vertsInShape == 1) debugDotCount++;
+            }
+        }
+
         rebuildGeometry(data);
         renderToFbo();
     }
@@ -137,9 +165,9 @@ public:
 
             // ---- View mode buttons (perspective / top) ------------------
             // Highlight the active button with a tinted colour.
-            ImVec4 activeCol  = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
-            ImVec4 normalCol  = ImGui::GetStyle().Colors[ImGuiCol_Button];
-
+            ImVec4 activeCol  = OceanodeColors::SelectedNodeText;
+			ImVec4 normalCol  = ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(ImGuiCol_Button));
+			
             ImGui::PushStyleColor(ImGuiCol_Button,
                 viewMode == 0 ? activeCol : normalCol);
             if (ImGui::SmallButton("[^]")) viewMode = 0;   // Perspective
@@ -150,6 +178,26 @@ public:
                 viewMode == 1 ? activeCol : normalCol);
             if (ImGui::SmallButton("[||]")) viewMode = 1;   // Top / flat
             ImGui::PopStyleColor();
+			
+			ImGui::SameLine();
+			char buf[256];
+			snprintf(buf, sizeof(buf), "Verts: %d  |  Shapes: %d  |  Dots: %d",debugVertexCount, debugShapeCount, debugDotCount);
+			ImGui::Text(buf);
+
+
+//			ImGui::Text(
+//			// ---- Debug overlay (vertex/shape/dot counts on top of texture) ----
+//			{
+//				ImDrawList* dl = ImGui::GetWindowDrawList();
+//				ImVec2 imgMin = ImGui::GetItemRectMin();
+//				char buf[256];
+//				snprintf(buf, sizeof(buf), "Verts: %d  |  Shapes: %d  |  Dots: %d",
+//						 debugVertexCount, debugShapeCount, debugDotCount);
+//				// Shadow + text for readability over any background
+//				dl->AddText(ImVec2(imgMin.x + 8 + 1, imgMin.y + 8 + 1), IM_COL32(0, 0, 0, 200), buf);
+//				dl->AddText(ImVec2(imgMin.x + 8,     imgMin.y + 8    ), IM_COL32(0, 255, 0, 255), buf);
+//			}
+
 
             // ---- FBO image — resize FBO when the window changes size ----
             float winW = ImGui::GetContentRegionAvail().x;
@@ -381,7 +429,7 @@ private:
                 float p0X = data[idx + 0] * 2.0f - 1.0f;
                 float p0Y = data[idx + 1] * 2.0f - 1.0f;
                 ofFloatColor raw(data[idx+2], data[idx+3], data[idx+4], 1.0f);
-                ofFloatColor col = lu ? applyBrightness(raw) : raw;
+                ofFloatColor col = lu ? 0.5f*applyBrightness(raw) : raw;
 
                 float angX = p0X * aX + ox;
                 float angY = p0Y * aY + oy;
@@ -579,7 +627,7 @@ private:
     //   left/right edges visibly bow outward (real galvo behaviour).
     // ------------------------------------------------------------------
     void drawFrustumOutline() const {
-        ofSetColor(180, 180, 80, 220);
+        ofSetColor(255, 255, 255, 128);
         ofSetLineWidth(2.0f);
 
         if (!sphericalProjection) {
@@ -720,7 +768,29 @@ private:
         } // end else (perspective view)
 
         fbo.end();
-        if (fbo.isAllocated()) textureOut = &fbo.getTexture();
+
+        // ---- Copy a vertically-flipped version into outputFbo ----
+        // The main FBO's raw GL texture is bottom-left origin (V=0 = scene
+        // bottom). Downstream textureOut consumers (e.g. ImGui::Image with
+        // default UVs) are top-left origin, so they show it upside down.
+        // We flip Y here so outputFbo's V=0 = scene top. The ImGui preview
+        // window keeps using the main FBO with its own UV flip, unaffected.
+        if (outputFbo.isAllocated()) {
+            outputFbo.begin();
+            ofClear(0, 0, 0, 255);
+            ofDisableDepthTest();
+            ofEnableAlphaBlending();
+            ofSetColor(255);
+            ofPushMatrix();
+            ofTranslate(0.0f, (float)outputFbo.getHeight());
+            ofScale(1.0f, -1.0f, 1.0f);
+            fbo.draw(0, 0);
+            ofPopMatrix();
+            outputFbo.end();
+            textureOut = &outputFbo.getTexture();
+        } else if (fbo.isAllocated()) {
+            textureOut = &fbo.getTexture();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -740,6 +810,20 @@ private:
         fbo.begin();
         ofClear(0, 0, 0, 255);
         fbo.end();
+
+        // Output FBO: same size, no depth/MSAA — holds the vertically-flipped
+        // copy exposed via the textureOut parameter.
+        ofFboSettings outSettings;
+        outSettings.width          = size;
+        outSettings.height         = size;
+        outSettings.internalformat = GL_RGBA;
+        outSettings.useDepth       = false;
+        outSettings.useStencil     = false;
+        outSettings.numSamples     = 0;
+        outputFbo.allocate(outSettings);
+        outputFbo.begin();
+        ofClear(0, 0, 0, 255);
+        outputFbo.end();
     }
 
     // ------------------------------------------------------------------
@@ -748,6 +832,7 @@ private:
     shared_ptr<ildaController> controller;
 
     ofFbo      fbo;
+    ofFbo      outputFbo;  // vertically-flipped copy for textureOut (top-left origin)
     int        currentFboSize = 1024;  // tracks current square FBO dimension
     ofVboMesh  beamMesh;   // GPU-resident for faster draw calls each frame
     ofVboMesh  floorMesh;
@@ -802,6 +887,11 @@ private:
 
     // Polish / guard state
     bool   disableUpdate = false;
+
+    // Debug counts (computed in update, displayed in draw overlay)
+    int debugVertexCount = 0;
+    int debugShapeCount  = 0;
+    int debugDotCount    = 0;
 };
 
 #endif /* laserSimulator_h */
