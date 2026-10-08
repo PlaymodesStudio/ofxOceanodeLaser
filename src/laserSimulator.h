@@ -27,6 +27,7 @@
 #include "ildaController.h"
 #include "ofMain.h"
 #include "ofxOceanodeColors.h"
+#include <cmath>
 
 
 class laserSimulator : public ofxOceanodeNodeModel {
@@ -68,8 +69,7 @@ public:
 		easyCam.setFarClip(camFar);
 		// After swapYZ with negation: laser head is at Y = -laserDistance.
 		// Orbit center is halfway between floor (Y=0) and laser head (Y=-LD).
-		glm::vec3 orbitCenter(0.0f, -(float)laserDistance.get() * 0.5f, 0.0f);
-		easyCam.orbit(camAzimuth, camElevation, camOrbDist, orbitCenter);
+		updatePerspectiveCamera();
 		
 		// Update clip planes when params change
 		parameterListeners.push(camNear.newListener([this](float &v){
@@ -149,19 +149,18 @@ public:
     // ------------------------------------------------------------------
     // draw() — called by Oceanode inside the main ImGui frame.
     // Opens a standalone floating window when "Show Window" is true.
-    // Mouse drag over the image orbits the easyCam; scroll wheel zooms.
+    // Left drag orbits; Shift+drag / right / middle drag pans; wheel zooms.
     // ------------------------------------------------------------------
     void draw(ofEventArgs& /*args*/) override {
         if (!fbo.isAllocated()) return;
         if (!showWindow)        return;
 
-        ImTextureID texId = (ImTextureID)(uintptr_t)fbo.getTexture().getTextureData().textureID;
-
         ImGui::SetNextWindowSize(ImVec2(600, 660), ImGuiCond_FirstUseEver);
         bool windowOpen = showWindow.get();
         if (ImGui::Begin("Laser Simulator##laserSimWin",
                          &windowOpen,
-                         ImGuiWindowFlags_NoFocusOnAppearing)) {
+                         ImGuiWindowFlags_NoFocusOnAppearing
+                         | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
 
             // ---- View mode buttons (perspective / top) ------------------
             // Highlight the active button with a tinted colour.
@@ -183,6 +182,14 @@ public:
 			char buf[256];
 			snprintf(buf, sizeof(buf), "Verts: %d  |  Shapes: %d  |  Dots: %d",debugVertexCount, debugShapeCount, debugDotCount);
 			ImGui::Text(buf);
+
+            ImGui::SameLine();
+            ImGui::SmallButton("[?]");
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Perspective view:\nDrag: orbit\nShift+drag / right / middle: pan\nWheel: zoom");
+                ImGui::EndTooltip();
+            }
 
 
 //			ImGui::Text(
@@ -207,23 +214,42 @@ public:
             if (newSize != currentFboSize) {
                 reallocFbo(newSize);
             }
-            // Flip UV Y: oF FBO origin = bottom-left, ImGui expects top-left
-            ImGui::Image(texId, ImVec2(sz, sz), ImVec2(0, 1), ImVec2(1, 0));
+            // Capture all three buttons so dragging navigates the viewport
+            // rather than moving the window, even after leaving the image.
+            const ImVec2 position = ImGui::GetCursorScreenPos();
+            ImGui::InvisibleButton("##LaserSimulatorViewport", ImVec2(sz, sz),
+                ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight
+                | ImGuiButtonFlags_MouseButtonMiddle);
+            // Fetch after reallocation, which may change the texture ID.
+            ImTextureID texId = (ImTextureID)(uintptr_t)fbo.getTexture().getTextureData().textureID;
+            ImGui::GetWindowDrawList()->AddImage(texId, position,
+                ImVec2(position.x + sz, position.y + sz), ImVec2(0, 1), ImVec2(1, 0));
 
             // ---- Interactive input (perspective mode only) ---------------
-            if (viewMode == 0 && ImGui::IsItemHovered()) {
+            if (viewMode == 0) {
                 const ImGuiIO& io = ImGui::GetIO();
-                if (io.MouseDown[0]) {
-                    camAzimuth   -= io.MouseDelta.x * 0.4f;
-                    camElevation -= io.MouseDelta.y * 0.4f;
-                    camElevation  = ofClamp(camElevation, -89.0f, 89.0f);
+                if (ImGui::IsItemActive()) {
+                    const bool pan = io.KeyShift || ImGui::IsMouseDown(ImGuiMouseButton_Right)
+                        || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+                    if (pan) {
+                        const float unitsPerPixel = 2.0f * camOrbDist
+                            * std::tan(glm::radians(easyCam.getFov() * 0.5f)) / sz;
+                        // The FBO preview inverts camera-space Y. Use its
+                        // displayed up direction so the scene follows the drag.
+                        camPanOffset += (-easyCam.getXAxis() * io.MouseDelta.x
+                            - easyCam.getYAxis() * io.MouseDelta.y) * unitsPerPixel;
+                    } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        const float degreesPerPixel = glm::degrees(0.008f);
+                        const float pitchLimit = glm::degrees(1.5f);
+                        camAzimuth = std::remainder(camAzimuth - io.MouseDelta.x * degreesPerPixel, 360.0f);
+                        camElevation = ofClamp(camElevation + io.MouseDelta.y * degreesPerPixel,
+                            -pitchLimit, pitchLimit);
+                    }
                 }
-                if (io.MouseWheel != 0.0f) {
-                    camOrbDist -= io.MouseWheel * 0.5f;
-                    camOrbDist  = std::max(camOrbDist, 0.5f);
+                if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f) {
+                    camOrbDist = ofClamp(camOrbDist * std::exp(-io.MouseWheel * 0.15f), 0.5f, 1.0e12f);
                 }
-                glm::vec3 orbitCenter(0.0f, -(float)laserDistance * 0.5f, 0.0f);
-                easyCam.orbit(camAzimuth, camElevation, camOrbDist, orbitCenter);
+                updatePerspectiveCamera();
             }
         }
         ImGui::End();
@@ -231,6 +257,11 @@ public:
     }
 
 private:
+    void updatePerspectiveCamera() {
+        const glm::vec3 orbitCenter(0.0f, -laserDistance.get() * 0.5f, 0.0f);
+        easyCam.orbit(camAzimuth, camElevation, camOrbDist, orbitCenter + camPanOffset);
+    }
+
     // ------------------------------------------------------------------
     // Constants
     // ------------------------------------------------------------------
@@ -688,10 +719,6 @@ private:
             float LD  = (float)laserDistance;
 
             // Temporarily override easyCam to a top-down position and distance
-            float savedAz  = camAzimuth;
-            float savedEl  = camElevation;
-            float savedDist = camOrbDist;
-
             glm::vec3 orbitCenter(0.0f, -LD * 0.5f, 0.0f);
             easyCam.orbit(0.01f, 89.99f, LD * 0.50f, orbitCenter);
 
@@ -719,10 +746,11 @@ private:
 
             easyCam.end();
             // Restore perspective cam orbit for next perspective frame
-            easyCam.orbit(savedAz, savedEl, savedDist, orbitCenter);
+            updatePerspectiveCamera();
         } else {
 			renderLikeUnity = true;
             // ---- Perspective view: easyCam orbit -------------------------
+            updatePerspectiveCamera();
             easyCam.begin(ofRectangle(0, 0, currentFboSize, currentFboSize));
 
         ofEnableDepthTest();
@@ -860,8 +888,9 @@ private:
     // Camera — ofEasyCam with manual ImGui orbit input
     ofEasyCam  easyCam;
     float      camAzimuth   =   0.0f;   // degrees, accumulated from mouse drag
-    float      camElevation =  30.0f;   // degrees, clamped to ±89
+    float      camElevation =  30.0f;   // degrees, clamped to ±1.5 radians
     float      camOrbDist   =  15.0f;   // world units (separate from ofParameter)
+    glm::vec3  camPanOffset = glm::vec3(0.0f); // world-space offset from scene center
 
     // Parameters — camera clip planes
     ofParameter<float> camNear;
