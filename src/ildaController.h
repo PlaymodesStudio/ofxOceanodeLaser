@@ -12,9 +12,20 @@
 #include "imgui.h"
 #include "ofxLaserManager.h"
 #include "ofxFatLine.h"
+#include <array>
 
 class ildaController : public ofxOceanodeBaseController{
 public:
+    static constexpr float ZoneSize = 800.0f;
+
+    struct ZoneConfig {
+        string stableId;
+        string name;
+        ofxLaser::ZoneId laserZoneId;
+        vector<bool> assigned;
+        vector<array<glm::vec2, 4>> warps;
+    };
+
     ildaController() : ofxOceanodeBaseController("ILDA"){
         // ------------------------------------------------------------------
         // Strategy A: detach ofxLaser::Manager from the global oF input
@@ -69,10 +80,12 @@ public:
         ofRemoveListener(ofEvents().mouseScrolled, &laser, &ofxLaser::Manager::mouseScrolled, OF_EVENT_ORDER_BEFORE_APP);
         ofRemoveListener(ofEvents().keyPressed,    &laser, &ofxLaser::Manager::keyPressed,    OF_EVENT_ORDER_BEFORE_APP);
 
-        laser.resetAllLasersToDefault();
-        zone = laser.addZone(0, 0, 800, 800);
-        laser.getLaser(0)->addZone(zone);
-        laser.getLaser(0)->getLaserZoneForZoneId(zone)->zoneTransformQuad.setDst(ofRectangle(0,0,800,800));
+        // Keep the projectors that Manager already loaded. Recreating them here
+        // discarded their armed state and other projector settings (and could
+        // leave a second DAC silent). Only the old zone objects need rebuilding.
+        for(auto &projector : laser.getLasers()) projector->clearOutputZones();
+        laser.getLaserState().canvasTarget->clearZones();
+        loadZones();
         
         // Override ofxLaser's hard-coded safety default of 0.2; we want full brightness on start.
         laser.globalBrightness = 1.0f;
@@ -98,27 +111,8 @@ public:
         
         freeze = false;
         pointDraggingIndex = -1;
-        ofJson warpPointsJson = ofLoadJson("warpPoints.json");
-        if(!warpPointsJson.empty()){
-            warpPoints.resize(4);
-            warpPoints[0].x = warpPointsJson["p0"]["x"];
-            warpPoints[0].y = warpPointsJson["p0"]["y"];
-            
-            warpPoints[1].x = warpPointsJson["p1"]["x"];
-            warpPoints[1].y = warpPointsJson["p1"]["y"];
-            
-            warpPoints[2].x = warpPointsJson["p2"]["x"];
-            warpPoints[2].y = warpPointsJson["p2"]["y"];
-            
-            warpPoints[3].x = warpPointsJson["p3"]["x"];
-            warpPoints[3].y = warpPointsJson["p3"]["y"];
-//            laser.getLaser(laser.getNumLasers()-1).getSortedOutputZones()[0]->zoneTransformQuad.setDstCorners(warpPoints[0] * 800, warpPoints[1] * 800, warpPoints[2] * 800, warpPoints[3] * 800);
-        }
-        else{
-            warpPoints = {glm::vec2(0, 0), glm::vec2(1, 0), glm::vec2(0, 1), glm::vec2(1, 1)};
-        }
     };
-    ~ildaController(){};
+    ~ildaController(){ saveZones(); };
     
     void update(){
         // Phase B: swap the write buffer (accumulated this frame by ildaShape
@@ -144,9 +138,15 @@ public:
             for(int i = 0; i < laser.getNumLasers(); i++){
                 auto& projectorRef = laser.getLaser(i);
                 if(projectorRef->armed.get()){
-                    projectorRef->armed = projectorRef->armed.get(); // force listener re-fire
+                    // Setting an ofParameter to its current value does not fire
+                    // its listener. Synchronise the DAC explicitly in case it
+                    // was disarmed while being assigned/reconnected.
+                    bool shouldBeArmed = true;
+                    if(projectorRef->hasDac()) projectorRef->getDac()->setArmed(shouldBeArmed);
                 }
-                applyWarpPointsToLaser(i);
+                for(int zoneIndex = 0; zoneIndex < static_cast<int>(zones.size()); zoneIndex++){
+                    applyWarpPointsToLaser(i, zoneIndex);
+                }
             }
             firstUpdate = false;
         }
@@ -157,10 +157,16 @@ public:
     void draw(){
 		//ImGui::Text(("GetNumLasers : " + ofToString(laser.getNumLasers()).c_str()));
 		ImGui::Text("GetNumLasers : %d",laser.getNumLasers());
+		ImGui::SameLine();
+		if(ImGui::Button("Add Laser")) addManagedLaser();
 		ImGui::Checkbox("Freeze", &freeze);
         if(ImGui::SliderFloat("Master Intensity", (float*)&laser.globalBrightness.get(), 0.0f, 1.0f)){
             //newValue.notify(f);
         }
+
+        drawZonesGui();
+
+        int laserToDelete = -1;
         for(int i = 0; i < laser.getNumLasers(); i++){
             auto &projectorRef = laser.getLaser(i);
             if(ImGui::TreeNode(projectorRef->getLabel().c_str())){
@@ -223,8 +229,8 @@ public:
                 //            gui->add(armed.set("ARMED", false));
                 //            armed.addListener(this, &ofxLaser::Projector::setArmed);
                 if(ImGui::Checkbox("Armed", (bool *)&projectorRef->armed.get())){
-					//Trigger event
-                    projectorRef->armed = projectorRef->armed;
+					bool shouldBeArmed = projectorRef->armed.get();
+                    if(projectorRef->hasDac()) projectorRef->getDac()->setArmed(shouldBeArmed);
                 }
                 
                 //            gui->add(testPattern.set("Test Pattern", 0,0,numTestPatterns));
@@ -361,6 +367,28 @@ public:
                 }
                 
                 if(ImGui::TreeNode("Warping")){
+                    if(zones.empty()){
+                        ImGui::TextDisabled("No zones");
+                        ImGui::TreePop();
+                        ImGui::TreePop();
+                        continue;
+                    }
+                    selectedZoneIndex = ofClamp(selectedZoneIndex, 0, static_cast<int>(zones.size()) - 1);
+                    vector<string> zoneNames = getZoneNames();
+                    if(ImGui::BeginCombo("Zone", zoneNames[selectedZoneIndex].c_str())){
+                        for(int zoneIndex = 0; zoneIndex < static_cast<int>(zoneNames.size()); zoneIndex++){
+                            bool selected = zoneIndex == selectedZoneIndex;
+                            if(ImGui::Selectable(zoneNames[zoneIndex].c_str(), selected)) selectedZoneIndex = zoneIndex;
+                            if(selected) ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    auto &warpPoints = zones[selectedZoneIndex].warps[i];
+                    if(ImGui::Button("Reset Selected Warp")){
+                        warpPoints = defaultWarp();
+                        pointDraggingIndex = -1;
+                        applyWarpPointsToLaser(i, selectedZoneIndex);
+                    }
 //                    auto screenPos = ImGui::GetCursorScreenPos();
 //                    //ImGui::Vec2 size;
 //                    ImVec2 screenSize = ImVec2(100, 100);
@@ -377,10 +405,16 @@ public:
                         // Coordenades de dibuix absolutes
                         ImVec2 screenPos = ImGui::GetCursorScreenPos();
                         ImVec2 screenSize = ImGui::GetContentRegionAvail(); // = squareSize, squareSize
+                        // Keep all four handles fully inside the child. Previously the
+                        // bottom-right handle (point 3) was centred exactly on the child
+                        // boundary, which made its hit-testing and dragging unreliable.
+                        const float handlePadding = 12.0f;
+                        ImVec2 canvasPos = screenPos + ImVec2(handlePadding, handlePadding);
+                        ImVec2 canvasSize = screenSize - ImVec2(handlePadding * 2.0f, handlePadding * 2.0f);
                         
                         
                         if(ImGui::IsWindowHovered()){
-                            glm::vec2 normPos = (ImGui::GetMousePos() - screenPos) / screenSize;
+                            glm::vec2 normPos = (ImGui::GetMousePos() - canvasPos) / canvasSize;
                             if(normPos.x>1.0) normPos.x = 1.0;
                             if(normPos.x<0.0) normPos.x = 0.0;
                             if(normPos.y>1.0) normPos.y = 1.0;
@@ -395,10 +429,10 @@ public:
                             }
                             if(mouseClicked){
                                 bool foundPoint = false;
-                                for(int i = warpPoints.size()-1; i >= 0 && !foundPoint ; i--){
-                                    auto point = (warpPoints[i] * screenSize) + screenPos;
+                                for(int pointIndex = static_cast<int>(warpPoints.size())-1; pointIndex >= 0 && !foundPoint ; pointIndex--){
+                                    auto point = (warpPoints[pointIndex] * canvasSize) + canvasPos;
                                     if(glm::distance(glm::vec2(ImGui::GetMousePos()), point) < 10){
-                                        pointDraggingIndex = i;
+                                        pointDraggingIndex = pointIndex;
                                         foundPoint = true;
                                     }
                                 }
@@ -409,10 +443,10 @@ public:
                             else if(ImGui::IsMouseDragging(0)){
                                 if(pointDraggingIndex != -1){
                                     if(ImGui::GetIO().KeyAlt){
-                                        warpPoints[pointDraggingIndex] += ImGui::GetIO().MouseDelta / (screenSize * ImVec2(100, 100));
+                                        warpPoints[pointDraggingIndex] += ImGui::GetIO().MouseDelta / (canvasSize * ImVec2(100, 100));
                                         pointsUpdated = true;
                                     }else{
-                                        warpPoints[pointDraggingIndex] += ImGui::GetIO().MouseDelta / screenSize;
+                                        warpPoints[pointDraggingIndex] += ImGui::GetIO().MouseDelta / canvasSize;
                                         pointsUpdated = true;
                                     }
                                 }
@@ -436,23 +470,23 @@ public:
                                 pointDraggingIndex = (pointDraggingIndex + 1) % warpPoints.size();
                             }
 
-                            clampWarpPoint(pointDraggingIndex);
+                            clampWarpPoint(warpPoints, pointDraggingIndex);
                         }
                         ImDrawList* draw_list = ImGui::GetWindowDrawList();
                         vector<float> x_t(warpPoints.size());
                         vector<float> y_t(warpPoints.size());
                         for(int i = 0; i < warpPoints.size(); i++){
-                            if(pointDraggingIndex == i) draw_list->AddCircle((warpPoints[i] * screenSize) + screenPos, 10, IM_COL32(255, 255, 0, 255));
-                            else draw_list->AddCircle((warpPoints[i] * screenSize) + screenPos, 10, IM_COL32(255, 128, 0, 255));
+                            if(pointDraggingIndex == i) draw_list->AddCircle((warpPoints[i] * canvasSize) + canvasPos, 10, IM_COL32(255, 255, 0, 255));
+                            else draw_list->AddCircle((warpPoints[i] * canvasSize) + canvasPos, 10, IM_COL32(255, 128, 0, 255));
                             string numString = ofToString(i);
-                            draw_list->AddText(ImGui::GetFont(), ImGui::GetFontSize(), (warpPoints[i] * screenSize) + screenPos - glm::vec2(5, 5), IM_COL32(255,255,255,255), numString.c_str(), numString.c_str()+ (i < 10 ? 1 : 2));
+                            draw_list->AddText(ImGui::GetFont(), ImGui::GetFontSize(), (warpPoints[i] * canvasSize) + canvasPos - glm::vec2(5, 5), IM_COL32(255,255,255,255), numString.c_str(), numString.c_str()+ (i < 10 ? 1 : 2));
                             x_t[i] = warpPoints[i].x;
                             y_t[i] = warpPoints[i].y;
                         }
                         draw_list->ChannelsMerge();
                         
                         if(pointsUpdated){
-                            applyWarpPointsToLaser(i);
+                            applyWarpPointsToLaser(i, selectedZoneIndex);
                         }
                     }
                     ImGui::EndChild(); // Always pair BeginChild/EndChild, even when clipped.
@@ -470,6 +504,8 @@ public:
 //                    ImGui::SliderFloat2("Pincushion", (float *)&zoneQuadTransform.pincushion, -2, 2);
                     ImGui::TreePop();
                 }
+
+                if(laser.getNumLasers() > 1 && ImGui::Button("Delete Laser")) laserToDelete = i;
                 
                 
                 ImGui::TreePop();
@@ -483,34 +519,60 @@ public:
 //            
         }
 
+        if(laserToDelete >= 0) deleteManagedLaser(laserToDelete);
+
 		if (ImGui::Button("Save Config")) {
-			laser.saveSettings();
-            ofJson warpPointsJson;
-            warpPointsJson["p0"]["x"] = warpPoints[0].x;
-            warpPointsJson["p0"]["y"] = warpPoints[0].y;
-            
-            warpPointsJson["p1"]["x"] = warpPoints[1].x;
-            warpPointsJson["p1"]["y"] = warpPoints[1].y;
-            
-            warpPointsJson["p2"]["x"] = warpPoints[2].x;
-            warpPointsJson["p2"]["y"] = warpPoints[2].y;
-            
-            warpPointsJson["p3"]["x"] = warpPoints[3].x;
-            warpPointsJson["p3"]["y"] = warpPoints[3].y;
-            
-            ofSavePrettyJson("warpPoints.json", warpPointsJson);
+			saveZones();
 		}
     }
     
     std::shared_ptr<ofxLaser::Laser>& addLaser(){
-        //laser.addLaser(dac);
-		//laser.createAndAddLaser();
-
+        // Kept for source compatibility. Projector creation is now owned by
+        // the controller; ILDA Projector nodes only select an existing laser.
         return laser.getLaser(laser.getNumLasers()-1);
+    }
+
+    vector<string> getLaserNames() {
+        vector<string> names;
+        for(const auto &projector : laser.getLasers()) names.push_back(projector->getLabel());
+        return names;
+    }
+
+    uint64_t getLasersRevision() const { return lasersRevision; }
+
+    std::shared_ptr<ofxLaser::Laser> getLaserAt(int index) {
+        if(index < 0 || index >= laser.getNumLasers()) return nullptr;
+        return laser.getLaser(index);
     }
     
     ofxLaser::Manager& getManager(){
         return laser;
+    }
+
+    vector<string> getZoneNames() const {
+        vector<string> names;
+        names.reserve(zones.size());
+        for(const auto &zoneConfig : zones) names.push_back(zoneConfig.name);
+        return names;
+    }
+
+    uint64_t getZonesRevision() const { return zonesRevision; }
+
+    string getZoneStableId(int index) const {
+        if(index < 0 || index >= static_cast<int>(zones.size())) return "";
+        return zones[index].stableId;
+    }
+
+    int findZoneIndex(const string &stableId) const {
+        for(int i = 0; i < static_cast<int>(zones.size()); i++){
+            if(zones[i].stableId == stableId) return i;
+        }
+        return zones.empty() ? -1 : 0;
+    }
+
+    glm::vec2 getZoneOffset(const string &stableId) const {
+        int index = findZoneIndex(stableId);
+        return index < 0 ? glm::vec2(0) : glm::vec2(index * ZoneSize, 0);
     }
 
     // -------------------------------------------------------------------
@@ -546,27 +608,244 @@ public:
         }
         return points;
     }
+
+    vector<ofxLaser::Point> getLaserPoints(int laserIndex) {
+        if(laserIndex < 0 || laserIndex >= laser.getNumLasers()) return {};
+        return laser.getLaser(laserIndex)->getLaserPoints();
+    }
     
     bool isFrozen(){return freeze;};
     
     ofEvent<float> newValue;
 private:
-    void applyWarpPointsToLaser(int laserIndex){
-        if(laserIndex < 0 || laserIndex >= laser.getNumLasers()) return;
-        if(warpPoints.size() < 4) return;
-
-        auto outputZone = laser.getLaser(laserIndex)->getLaserZoneForZoneId(zone);
-        if(outputZone == nullptr) return;
-
-        outputZone->zoneTransformQuad.setDstCorners(
-            warpPoints[0] * 800,
-            warpPoints[1] * 800,
-            warpPoints[2] * 800,
-            warpPoints[3] * 800
-        );
+    static array<glm::vec2, 4> defaultWarp(){
+        return {glm::vec2(0, 0), glm::vec2(1, 0), glm::vec2(0, 1), glm::vec2(1, 1)};
     }
 
-    void clampWarpPoint(int pointIndex){
+    void ensureWarpCount(ZoneConfig &zoneConfig){
+        while(zoneConfig.warps.size() < static_cast<size_t>(laser.getNumLasers())){
+            zoneConfig.warps.push_back(defaultWarp());
+        }
+        while(zoneConfig.assigned.size() < static_cast<size_t>(laser.getNumLasers())){
+            zoneConfig.assigned.push_back(false);
+        }
+    }
+
+    void syncZoneAssignment(int laserIndex, int zoneIndex){
+        if(laserIndex < 0 || laserIndex >= laser.getNumLasers()) return;
+        if(zoneIndex < 0 || zoneIndex >= static_cast<int>(zones.size())) return;
+        ensureWarpCount(zones[zoneIndex]);
+        auto &projector = laser.getLaser(laserIndex);
+        const bool present = projector->hasZone(zones[zoneIndex].laserZoneId);
+        const bool wanted = zones[zoneIndex].assigned[laserIndex];
+        if(wanted && !present) projector->addZone(zones[zoneIndex].laserZoneId);
+        if(!wanted && present) projector->removeZone(zones[zoneIndex].laserZoneId);
+        if(wanted) applyWarpPointsToLaser(laserIndex, zoneIndex);
+    }
+
+    void relayoutInputZones(){
+        auto inputZones = laser.getLaserState().canvasTarget->getInputZones();
+        for(int i = 0; i < static_cast<int>(inputZones.size()); i++){
+            if(inputZones[i]) inputZones[i]->set(i * ZoneSize, 0, ZoneSize, ZoneSize);
+        }
+    }
+
+    void addManagedLaser(){
+        laser.createAndAddLaser();
+        const int laserIndex = laser.getNumLasers() - 1;
+        auto &projector = laser.getLaser(laserIndex);
+        projector->armed = false;
+        for(int zoneIndex = 0; zoneIndex < static_cast<int>(zones.size()); zoneIndex++){
+            ensureWarpCount(zones[zoneIndex]);
+            zones[zoneIndex].assigned[laserIndex] = false;
+            syncZoneAssignment(laserIndex, zoneIndex);
+        }
+        lasersRevision++;
+        saveZones();
+    }
+
+    void deleteManagedLaser(int laserIndex){
+        if(laser.getNumLasers() <= 1 || laserIndex < 0 || laserIndex >= laser.getNumLasers()) return;
+        auto projector = laser.getLaser(laserIndex);
+        if(!laser.deleteLaser(projector)) return;
+        for(auto &zoneConfig : zones){
+            if(laserIndex < static_cast<int>(zoneConfig.assigned.size())){
+                zoneConfig.assigned.erase(zoneConfig.assigned.begin() + laserIndex);
+            }
+            if(laserIndex < static_cast<int>(zoneConfig.warps.size())){
+                zoneConfig.warps.erase(zoneConfig.warps.begin() + laserIndex);
+            }
+        }
+        lasersRevision++;
+        saveZones();
+    }
+
+    void addZone(const string &name = "", const string &stableId = "", const vector<bool> &assignments = {}){
+        ZoneConfig config;
+        config.stableId = stableId.empty()
+            ? "zone-" + ofToString(ofGetSystemTimeMicros()) + "-" + ofToString(static_cast<int>(ofRandom(1000000)))
+            : stableId;
+        config.name = name.empty() ? "Zone " + ofToString(zones.size() + 1) : name;
+        config.laserZoneId = laser.addZone(zones.size() * ZoneSize, 0, ZoneSize, ZoneSize);
+        ensureWarpCount(config);
+        for(int laserIndex = 0; laserIndex < laser.getNumLasers(); laserIndex++){
+            config.assigned[laserIndex] = assignments.empty() ||
+                (laserIndex < static_cast<int>(assignments.size()) && assignments[laserIndex]);
+        }
+        zones.push_back(config);
+        laser.setCanvasSize(zones.size() * ZoneSize, ZoneSize);
+        // ManagerBase::setCanvasSize deliberately expands a zone that matched
+        // the previous canvas bounds. That behaviour is useful for the default
+        // single-zone workflow, but would make Zone 1 overlap every later tile.
+        relayoutInputZones();
+
+        for(int laserIndex = 0; laserIndex < laser.getNumLasers(); laserIndex++){
+            syncZoneAssignment(laserIndex, static_cast<int>(zones.size()) - 1);
+        }
+        zonesRevision++;
+    }
+
+    void deleteZone(int index){
+        if(index < 0 || index >= static_cast<int>(zones.size()) || zones.size() <= 1) return;
+        auto inputZones = laser.getLaserState().canvasTarget->getInputZones();
+        if(index >= static_cast<int>(inputZones.size())) return;
+        laser.deleteZone(inputZones[index]);
+        zones.erase(zones.begin() + index);
+
+        inputZones = laser.getLaserState().canvasTarget->getInputZones();
+        for(int i = 0; i < static_cast<int>(zones.size()) && i < static_cast<int>(inputZones.size()); i++)
+            zones[i].laserZoneId = inputZones[i]->getZoneId();
+        laser.setCanvasSize(zones.size() * ZoneSize, ZoneSize);
+        relayoutInputZones();
+        selectedZoneIndex = ofClamp(selectedZoneIndex, 0, static_cast<int>(zones.size()) - 1);
+        zonesRevision++;
+    }
+
+    void drawZonesGui(){
+        if(!ImGui::TreeNode("Zones")) return;
+        if(ImGui::Button("Add Zone")) addZone();
+        ImGui::SameLine();
+        ImGui::TextDisabled("Shapes select a zone in the ILDA Shape node");
+
+        for(int zoneIndex = 0; zoneIndex < static_cast<int>(zones.size()); zoneIndex++){
+            auto &config = zones[zoneIndex];
+            ImGui::PushID(config.stableId.c_str());
+            bool open = ImGui::TreeNode(config.name.c_str());
+            if(open){
+                char nameBuffer[128];
+                std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", config.name.c_str());
+                if(ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer))){
+                    config.name = nameBuffer;
+                    zonesRevision++;
+                }
+                ImGui::Text("Input: %.0f..%.0f x 0..%.0f", zoneIndex * ZoneSize,
+                            (zoneIndex + 1) * ZoneSize, ZoneSize);
+                for(int laserIndex = 0; laserIndex < laser.getNumLasers(); laserIndex++){
+                    auto &projector = laser.getLaser(laserIndex);
+                    ensureWarpCount(config);
+                    bool assigned = config.assigned[laserIndex];
+                    string label = "Send to " + projector->getLabel();
+                    if(ImGui::Checkbox(label.c_str(), &assigned)){
+                        config.assigned[laserIndex] = assigned;
+                        syncZoneAssignment(laserIndex, zoneIndex);
+                    }
+                }
+                if(zones.size() > 1 && ImGui::Button("Delete Zone")){
+                    deleteZone(zoneIndex);
+                    ImGui::TreePop();
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+        ImGui::TreePop();
+    }
+
+    void loadZones(){
+        ofJson json = ofLoadJson("ildaZones.json");
+        if(json.contains("zones") && json["zones"].is_array()){
+            for(const auto &zoneJson : json["zones"]){
+                vector<bool> assignments;
+                if(zoneJson.contains("assigned")) assignments = zoneJson["assigned"].get<vector<bool>>();
+                addZone(zoneJson.value("name", ""), zoneJson.value("id", ""), assignments);
+                auto &config = zones.back();
+                if(zoneJson.contains("warps")){
+                    const auto &warpsJson = zoneJson["warps"];
+                    for(int laserIndex = 0; laserIndex < static_cast<int>(warpsJson.size()) && laserIndex < laser.getNumLasers(); laserIndex++){
+                        for(int pointIndex = 0; pointIndex < 4 && pointIndex < static_cast<int>(warpsJson[laserIndex].size()); pointIndex++){
+                            config.warps[laserIndex][pointIndex] = glm::vec2(
+                                warpsJson[laserIndex][pointIndex][0].get<float>(),
+                                warpsJson[laserIndex][pointIndex][1].get<float>());
+                        }
+                    }
+                }
+            }
+        }
+        if(zones.empty()){
+            addZone("Zone 1");
+            ofJson legacy = ofLoadJson("warpPoints.json");
+            if(!legacy.empty()){
+                for(int pointIndex = 0; pointIndex < 4; pointIndex++){
+                    string key = "p" + ofToString(pointIndex);
+                    if(legacy.contains(key)){
+                        glm::vec2 migratedPoint = {
+                            legacy[key].value("x", zones[0].warps[0][pointIndex].x),
+                            legacy[key].value("y", zones[0].warps[0][pointIndex].y)};
+                        for(auto &laserWarp : zones[0].warps) laserWarp[pointIndex] = migratedPoint;
+                    }
+                }
+            }
+        }
+    }
+
+    void saveZones(){
+        ofJson json;
+        json["version"] = 1;
+        json["zones"] = ofJson::array();
+        for(const auto &config : zones){
+            ofJson zoneJson;
+            zoneJson["id"] = config.stableId;
+            zoneJson["name"] = config.name;
+            zoneJson["assigned"] = ofJson::array();
+            zoneJson["warps"] = ofJson::array();
+            for(int laserIndex = 0; laserIndex < laser.getNumLasers(); laserIndex++){
+                zoneJson["assigned"].push_back(laserIndex < static_cast<int>(config.assigned.size()) && config.assigned[laserIndex]);
+                ofJson warpJson = ofJson::array();
+                for(const auto &point : config.warps[laserIndex]) warpJson.push_back({point.x, point.y});
+                zoneJson["warps"].push_back(warpJson);
+            }
+            json["zones"].push_back(zoneJson);
+        }
+        ofSavePrettyJson("ildaZones.json", json);
+        laser.saveSettings();
+    }
+
+    void applyWarpPointsToLaser(int laserIndex, int zoneIndex){
+        if(laserIndex < 0 || laserIndex >= laser.getNumLasers()) return;
+        if(zoneIndex < 0 || zoneIndex >= static_cast<int>(zones.size())) return;
+        ensureWarpCount(zones[zoneIndex]);
+
+        auto outputZone = laser.getLaser(laserIndex)->getLaserZoneForZoneId(zones[zoneIndex].laserZoneId);
+        if(outputZone == nullptr) return;
+
+        const auto &warpPoints = zones[zoneIndex].warps[laserIndex];
+
+        // This controller owns a single four-corner warp. Force the output zone
+        // to use that transform so a previously persisted complex transform
+        // cannot silently override it and look like a second warp.
+        outputZone->transformType = 0;
+        outputZone->zoneTransformQuad.setDstCorners(
+            warpPoints[0] * ZoneSize,
+            warpPoints[1] * ZoneSize,
+            warpPoints[2] * ZoneSize,
+            warpPoints[3] * ZoneSize
+        );
+        outputZone->update();
+    }
+
+    void clampWarpPoint(array<glm::vec2, 4> &warpPoints, int pointIndex){
         if(pointIndex < 0 || pointIndex >= static_cast<int>(warpPoints.size())) return;
 
         if(warpPoints[pointIndex].x > 1.0f) warpPoints[pointIndex].x = 1.0f;
@@ -577,7 +856,10 @@ private:
 
     ofxLaser::Manager laser;
     ofxLaser::DacAssigner* dacAssigner;
-    ofxLaser::ZoneId zone;
+    vector<ZoneConfig> zones;
+    uint64_t zonesRevision = 0;
+    uint64_t lasersRevision = 0;
+    int selectedZoneIndex = 0;
 
  ofParameter<void> saveConfig;
  bool freeze;
@@ -592,7 +874,6 @@ private:
     vector<float> simulatorWriteBuffer;
     vector<float> simulatorReadBuffer;
 
-    vector<glm::vec2> warpPoints;
     int pointDraggingIndex;
 };
 

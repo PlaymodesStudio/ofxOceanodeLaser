@@ -2,15 +2,13 @@
 //  laserSimulator.h
 //  ofxOceanodeLaser
 //
-//  Renders a real-time 3D simulation of all ILDA laser shapes currently
-//  being sent to the laser, inside an ImGui window with a dynamic FBO.
+//  Renders a real-time 3D simulation of the selected configured projector's
+//  final laser points, inside an ImGui window with a dynamic FBO.
 //  The FBO starts at 1024x1024 and is reallocated to the smallest of
 //  the ImGui window's content width/height whenever the window is resized.
 //
-//  Capture mechanism: ildaShape calls controller->publishLaserShape() for
-//  every fatline that passes the black-threshold test, pushing a flat
-//  [x, y, r, g, b, ..., -1] buffer (x/y normalised by 800, colours 0..1).
-//  This node reads that buffer each frame and rebuilds beam geometry.
+//  The simulator reads the selected Laser's post-routing/post-warp points and
+//  converts lit runs to [x, y, r, g, b, ..., -1] geometry each frame.
 //
 //  World convention:
 //    - Floor  = XY plane (Z = 0)
@@ -27,6 +25,7 @@
 #include "ildaController.h"
 #include "ofMain.h"
 #include "ofxOceanodeColors.h"
+#include <limits>
 
 
 class laserSimulator : public ofxOceanodeNodeModel {
@@ -41,6 +40,8 @@ public:
     // ------------------------------------------------------------------
     void setup() override
 	{
+		laserDropdown = addParameterDropdown(laserIndex, "Laser", 0, controller->getLaserNames());
+
 		// --- Projection --- (inspector-only: keeps the node GUI clean)
 		addInspectorParameter(nearWidth.set("Near Width", 0.0f, 0.0f, 2.0f));
 		addInspectorParameter(sphericalProjection.set("Spherical Proj", false));
@@ -96,6 +97,7 @@ public:
 
 		// Allocate FBO at initial size; will be reallocated on window resize
 		reallocFbo(currentFboSize);
+        refreshLasers();
     }
 
     // ------------------------------------------------------------------
@@ -115,7 +117,9 @@ public:
     // ------------------------------------------------------------------
     void update(ofEventArgs& /*args*/) override {
         if (disableUpdate) return;
-        const vector<float>& data = controller->getSimulatorData();
+        refreshLasers();
+        rebuildSelectedLaserData();
+        const vector<float>& data = selectedLaserData;
 
         // Compute debug counts from the buffer
         debugVertexCount = 0;
@@ -159,7 +163,9 @@ public:
 
         ImGui::SetNextWindowSize(ImVec2(600, 660), ImGuiCond_FirstUseEver);
         bool windowOpen = showWindow.get();
-        if (ImGui::Begin("Laser Simulator##laserSimWin",
+        const string windowTitle = "Laser Simulator " + ofToString(getNumIdentifier()) +
+                                   "###laserSimWin" + ofToString(getNumIdentifier());
+        if (ImGui::Begin(windowTitle.c_str(),
                          &windowOpen,
                          ImGuiWindowFlags_NoFocusOnAppearing)) {
 
@@ -235,6 +241,41 @@ private:
     // Constants
     // ------------------------------------------------------------------
     static constexpr int   STRIDE    = 5;  // x, y, r, g, b per vertex
+
+    void refreshLasers() {
+        if(knownLasersRevision == controller->getLasersRevision()) return;
+        knownLasersRevision = controller->getLasersRevision();
+        auto names = controller->getLaserNames();
+        if(names.empty()) names.push_back("No lasers");
+        laserDropdown->setDropdownOptions(names);
+        laserIndex.setMin(0);
+        laserIndex.setMax(std::max(0, static_cast<int>(names.size()) - 1));
+        if(laserIndex.get() > laserIndex.getMax())
+            laserIndex.setWithoutEventNotifications(laserIndex.getMax());
+    }
+
+    void rebuildSelectedLaserData() {
+        selectedLaserData.clear();
+        const vector<ofxLaser::Point> points = controller->getLaserPoints(laserIndex.get());
+        bool shapeOpen = false;
+        for(const auto &point : points) {
+            const bool lit = std::max(point.r, std::max(point.g, point.b)) > 0.0f;
+            if(!lit) {
+                if(shapeOpen) {
+                    selectedLaserData.push_back(-1.0f);
+                    shapeOpen = false;
+                }
+                continue;
+            }
+            selectedLaserData.push_back(point.x / 800.0f);
+            selectedLaserData.push_back(point.y / 800.0f);
+            selectedLaserData.push_back(ofClamp(point.r / 255.0f, 0.0f, 1.0f));
+            selectedLaserData.push_back(ofClamp(point.g / 255.0f, 0.0f, 1.0f));
+            selectedLaserData.push_back(ofClamp(point.b / 255.0f, 0.0f, 1.0f));
+            shapeOpen = true;
+        }
+        if(shapeOpen) selectedLaserData.push_back(-1.0f);
+    }
 
     // ------------------------------------------------------------------
     // Coordinate remap (applied to every geometry output point):
@@ -830,6 +871,10 @@ private:
     // Data members
     // ------------------------------------------------------------------
     shared_ptr<ildaController> controller;
+    shared_ptr<ofxOceanodeParameter<int>> laserDropdown;
+    ofParameter<int> laserIndex;
+    uint64_t knownLasersRevision = std::numeric_limits<uint64_t>::max();
+    vector<float> selectedLaserData;
 
     ofFbo      fbo;
     ofFbo      outputFbo;  // vertically-flipped copy for textureOut (top-left origin)
