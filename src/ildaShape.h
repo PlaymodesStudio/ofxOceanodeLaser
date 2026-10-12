@@ -12,6 +12,7 @@
 #include "ildaController.h"
 #include "ofxFatLine.h"
 #include "ildaMaskField.h"
+#include <limits>
 
 
 class ildaShape : public ofxOceanodeNodeModel {
@@ -20,14 +21,20 @@ public:
     
     std::string macroMixerBlocker() const override { return "Uses the shared ILDA controller. Connect the mixed Fatline Vector to ILDA Shape outside MacroMixer."; }
 
-    void setup(){
+    void setup() override {
         addParameter(vInput.set("v In", {ofxFatLine()}));
+        zoneDropdown = addParameterDropdown(zone, "Zone", 0, controller->getZoneNames());
+        selectedZoneId = controller->getZoneStableId(0);
+        zoneListener = zone.newListener([this](int &index){
+            selectedZoneId = controller->getZoneStableId(index);
+        });
         addParameterDropdown(renderProfile, "Profile", 0, {"Fast", "Default", "High Quality"});
 		addParameter(sendBlackShapes.set("Black", true));
         addParameter(blackThreshold.set("Black Thr", 0, 0, 1));
         options = {OFXLASER_PROFILE_FAST, OFXLASER_PROFILE_DEFAULT, OFXLASER_PROFILE_DETAIL};
-		listener = vInput.newListener([this](vector<ofxFatLine> &vf) {
-			if (!disable) {
+        listener = vInput.newListener([this](vector<ofxFatLine> &vf) {
+            if (!disable) {
+                refreshZones();
                 auto toSendFatline = vf;
                 if(controller->isFrozen()){
                     toSendFatline = storedInput;
@@ -68,23 +75,55 @@ public:
                         // on the first shape of the frame regardless of draw order.
                         controller->publishLaserShape(vertices, colors);
 
-                        if (vertices.size() == 1) {
-                            controller->getManager().drawDot(vertices[0], colors[0], 1, options[renderProfile]);
+                        // Mask in the shape's local canvas before routing into a zone.
+                        ofPolyline routedPoly(vertices);
+                        routedPoly.setClosed(fat.isClosed());
+                        const glm::vec2 zoneOffset = controller->getZoneOffset(selectedZoneId);
+                        for(auto &vertex : routedPoly.getVertices()){
+                            vertex.x += zoneOffset.x;
+                            vertex.y += zoneOffset.y;
                         }
-                        else if (masked) {
-                            ofPolyline poly(vertices);
-                            poly.setClosed(fat.isClosed());
-                            controller->getManager().drawPoly(poly, colors, options[renderProfile]);
+
+                        auto &manager = controller->getManager();
+                        const bool previousUseClipRectangle = manager.useClipRectangle;
+                        const ofRectangle previousClipRectangle = manager.clipRectangle;
+                        // Inset the clip so a shared edge cannot reach the adjacent zone.
+                        manager.useClipRectangle = true;
+                        manager.clipRectangle.set(zoneOffset.x + 0.01f, 0.01f,
+                                                  ildaController::ZoneSize - 0.02f,
+                                                  ildaController::ZoneSize - 0.02f);
+                        if (routedPoly.size() == 1) {
+                            manager.drawDot(routedPoly.getVertices()[0], colors[0], 1, options[renderProfile]);
                         }
                         else {
-                            controller->getManager().drawPoly((ofPolyline)fat, colors, options[renderProfile]);
+                            manager.drawPoly(routedPoly, colors, options[renderProfile]);
                         }
+                        manager.useClipRectangle = previousUseClipRectangle;
+                        manager.clipRectangle = previousClipRectangle;
                     }
 				}
 			}
         });
 
 		disable = false;
+    }
+
+    void update(ofEventArgs &) override {
+        refreshZones();
+    }
+
+    void loadBeforeConnections(ofJson &json) override {
+        if(json.contains("ildaZoneId")) selectedZoneId = json["ildaZoneId"].get<string>();
+        refreshZones();
+    }
+
+    void loadCustomPersistent(ofJson &json) override {
+        if(json.contains("ildaZoneId")) selectedZoneId = json["ildaZoneId"].get<string>();
+        refreshZones();
+    }
+
+    void presetSave(ofJson &json) override {
+        json["ildaZoneId"] = selectedZoneId;
     }
 
 	void presetWillBeLoaded() override {
@@ -127,8 +166,24 @@ private:
     vector<ildaMasking::MaskedVertex> maskedSamples;
     vector<glm::vec3> maskedVertices;
 
+    void refreshZones(){
+        if(knownZonesRevision == controller->getZonesRevision()) return;
+        knownZonesRevision = controller->getZonesRevision();
+        auto names = controller->getZoneNames();
+        if(names.empty()) names.push_back("No zones");
+        zoneDropdown->setDropdownOptions(names);
+        zone.setMin(0);
+        zone.setMax(std::max(0, static_cast<int>(names.size()) - 1));
+
+        int index = controller->findZoneIndex(selectedZoneId);
+        if(index < 0) index = 0;
+        selectedZoneId = controller->getZoneStableId(index);
+        zone.setWithoutEventNotifications(index);
+    }
+
     shared_ptr<ildaController> controller;
     vector<string> options;
+    ofParameter<int> zone;
     ofParameter<int> renderProfile;
 	ofParameter<bool> sendBlackShapes;
     ofParameter<float> blackThreshold;
@@ -138,6 +193,10 @@ private:
 	ofParameter<vector<float>> oscOutput;
     
     ofEventListener listener;
+    ofEventListener zoneListener;
+    shared_ptr<ofxOceanodeParameter<int>> zoneDropdown;
+    string selectedZoneId;
+    uint64_t knownZonesRevision = std::numeric_limits<uint64_t>::max();
     
     vector<ofxFatLine> storedInput;
 

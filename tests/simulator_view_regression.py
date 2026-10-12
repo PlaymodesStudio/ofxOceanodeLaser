@@ -22,6 +22,7 @@ def main():
     simulator = (ROOT / "src/laserSimulator.h").read_text()
     code = r'''
 #include <cassert>
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -37,10 +38,21 @@ struct Output {
     USED_VIEW
 };
 struct ofEventArgs {};
+namespace ofxLaser {
+struct Point { float x, y, r, g, b; };
+}
+float ofClamp(float value, float low, float high) { return std::clamp(value, low, high); }
+struct Selection {
+    int value = 0;
+    int get() { return value; }
+};
 struct Controller {
-    vector<float> data;
+    vector<ofxLaser::Point> data, secondLaser;
     int reads = 0;
-    const vector<float>& getSimulatorData() { ++reads; return data; }
+    vector<ofxLaser::Point> getLaserPoints(int index) {
+        ++reads;
+        return index == 0 ? data : secondLaser;
+    }
 };
 struct Simulator {
     bool disableUpdate = false, showWindow = false, windowVisible = false;
@@ -48,10 +60,14 @@ struct Simulator {
     static constexpr int STRIDE = 5;
     Output output;
     std::shared_ptr<Controller> controller = std::make_shared<Controller>();
+    Selection laserIndex;
+    vector<float> selectedLaserData, renderedData;
     int rebuilds = 0, renders = 0;
     Output& getOceanodeParameter(int) { return output; }
-    void rebuildGeometry(const vector<float>&) { ++rebuilds; }
+    void refreshLasers() {}
+    void rebuildGeometry(const vector<float>& data) { ++rebuilds; renderedData = data; }
     void renderToFbo() { ++renders; }
+    REBUILD_DATA
     UPDATE
 };
 int main() {
@@ -59,7 +75,7 @@ int main() {
     ofEventArgs args;
     s.update(args);
     assert(s.renders == 0); // frame zero must not imply view demand
-    s.controller->data = {0,0,1,1,1,-1};
+    s.controller->data = {{0,0,255,255,255}};
     s.output.markUsedByView(); // visible Custom GUI, no cable, Show off
     ++frame;
     s.update(args);
@@ -93,6 +109,21 @@ int main() {
     s.update(args);
     assert(s.renders == 5 && s.debugDotCount == 0); // clear stale shapes
     assert(s.controller->reads == 5 && s.rebuilds == 5);
+    // Select only the second projector, normalize coordinates/colours, and
+    // split lit runs at blanking points rather than drawing travel moves.
+    s.controller->secondLaser = {{400,800,255,128,0}, {800,400,0,255,255},
+                                {0,0,0,0,0}, {200,200,0,0,255}};
+    s.laserIndex.value = 1;
+    s.update(args);
+    assert(s.renders == 6 && s.controller->reads == 6);
+    assert(s.debugVertexCount == 3 && s.debugShapeCount == 2 && s.debugDotCount == 1);
+    assert(s.renderedData.size() == 17);
+    assert(s.renderedData[0] == 0.5f && s.renderedData[1] == 1.0f);
+    assert(s.renderedData[2] == 1.0f && s.renderedData[3] == 128.0f / 255.0f);
+    assert(s.renderedData[10] == -1.0f && s.renderedData.back() == -1.0f);
+    s.controller->secondLaser = {{100,100,0,0,0}};
+    s.update(args);
+    assert(s.renders == 7 && s.renderedData.empty());
     frame = 0;
     assert(!s.output.wasUsedByView()); // no underflow if frame counter resets
 }
@@ -100,13 +131,14 @@ int main() {
     code = code.replace("MARK_VIEW", method(parameter, "void markUsedByView("))
     code = code.replace("USED_VIEW", method(parameter, "bool wasUsedByView("))
     code = code.replace("UPDATE", method(simulator, "void update(ofEventArgs&"))
+    code = code.replace("REBUILD_DATA", method(simulator, "void rebuildSelectedLaserData("))
     with tempfile.TemporaryDirectory(prefix="laser-view-") as directory:
         source, binary = Path(directory) / "test.cpp", Path(directory) / "test"
         source.write_text(code)
         subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
                         "-fsanitize=address,undefined", str(source), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=10)
-    print("Simulator view regression passed: GUI demand, expiry, cables, window visibility, preset guard, empty data.")
+    print("Simulator regression passed: view demand, preset guard, projector selection, blanking, normalization, empty data.")
 
 
 if __name__ == "__main__":
