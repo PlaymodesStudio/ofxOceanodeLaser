@@ -177,6 +177,12 @@ public:
                 viewMode == 1 ? activeCol : normalCol);
             if (ImGui::SmallButton("[||]")) viewMode = 1;   // Top / flat
             ImGui::PopStyleColor();
+
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                drawReferenceGrid ? activeCol : normalCol);
+            if (ImGui::SmallButton("[Grid]")) drawReferenceGrid = !drawReferenceGrid;
+            ImGui::PopStyleColor();
 			
 			ImGui::SameLine();
 			char buf[256];
@@ -224,6 +230,22 @@ public:
             ImTextureID texId = (ImTextureID)(uintptr_t)fbo.getTexture().getTextureData().textureID;
             ImGui::GetWindowDrawList()->AddImage(texId, position,
                 ImVec2(position.x + sz, position.y + sz), ImVec2(0, 1), ImVec2(1, 0));
+
+            // Flat-view reference overlay: four cells per axis, crossing at the origin.
+            if (viewMode == 1 && drawReferenceGrid) {
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const ImVec2 end(position.x + sz, position.y + sz);
+                const ImU32 gridColor = IM_COL32(255, 0, 0, 64);
+                dl->PushClipRect(position, end, true);
+                for (int i = 0; i <= 4; ++i) {
+                    const float offset = sz * (float)i / 4.0f;
+                    dl->AddLine(ImVec2(position.x + offset, position.y),
+                        ImVec2(position.x + offset, end.y), gridColor, 1.0f);
+                    dl->AddLine(ImVec2(position.x, position.y + offset),
+                        ImVec2(end.x, position.y + offset), gridColor, 1.0f);
+                }
+                dl->PopClipRect();
+            }
 
             // ---- Interactive input (perspective mode only) ---------------
             if (viewMode == 0) {
@@ -867,6 +889,7 @@ private:
 
     // View mode: 0 = Perspective (easyCam orbit), 1 = Top orthographic
     int        viewMode = 0;
+    bool       drawReferenceGrid = false;
 
     // Parameters — projection
     ofParameter<bool>  sphericalProjection;
