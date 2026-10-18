@@ -37,6 +37,8 @@ public:
         , ofxOceanodeNodeModel("Laser Simulator")
     {}
 
+    std::string macroMixerBlocker() const override { return "Reads the shared ILDA simulation buffer. Keep Laser Simulator outside MacroMixer."; }
+
     // ------------------------------------------------------------------
     // setup() — all parameter wiring lives here (never in the constructor)
     // ------------------------------------------------------------------

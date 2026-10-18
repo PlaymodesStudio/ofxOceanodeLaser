@@ -16,6 +16,8 @@ class ildaProjector : public ofxOceanodeNodeModel {
 public:
     ildaProjector(shared_ptr<ildaController> iController) : controller(iController), ofxOceanodeNodeModel("ILDA Projector"){}
     
+    std::string macroMixerBlocker() const override { return "Arms a laser DAC and uses the shared ILDA controller. Keep ILDA Projector outside MacroMixer."; }
+
     void setup(){
         projector = controller->addLaser();
         

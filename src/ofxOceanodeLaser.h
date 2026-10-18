@@ -21,6 +21,8 @@ class ildaDebugger : public ofxOceanodeNodeModel {
 public:
     ildaDebugger(shared_ptr<ildaController> iController) : controller(iController), ofxOceanodeNodeModel("ILDA Debugger"){}
     
+    std::string macroMixerBlocker() const override { return "Reads shared laser hardware state. Keep ILDA Debugger outside MacroMixer."; }
+
     void setup(){
         addParameter(x.set("x", {0}, {0}, {1}));
         addParameter(y.set("y", {0}, {0}, {1}));

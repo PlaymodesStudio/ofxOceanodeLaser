@@ -17,6 +17,8 @@ class ildaShape : public ofxOceanodeNodeModel {
 public:
     ildaShape(shared_ptr<ildaController> iController) : controller(iController), ofxOceanodeNodeModel("ILDA Shape"){}
     
+    std::string macroMixerBlocker() const override { return "Uses the shared ILDA controller. Connect the mixed Fatline Vector to ILDA Shape outside MacroMixer."; }
+
     void setup(){
         addParameter(vInput.set("v In", {ofxFatLine()}));
         addParameterDropdown(renderProfile, "Profile", 0, {"Fast", "Default", "High Quality"});

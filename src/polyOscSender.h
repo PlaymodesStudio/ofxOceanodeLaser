@@ -18,6 +18,8 @@ class polyOscSender : public ofxOceanodeNodeModel{
 public:
     polyOscSender(shared_ptr<ofxOceanodeOSCController> _controller) : ofxOceanodeNodeModel("Polylines OSC Sender"), controller(_controller){};
     
+    std::string macroMixerBlocker() const override { return "Sends OSC to an external receiver. Keep Polylines OSC Sender outside MacroMixer."; }
+
     void setup();
     
     void update(ofEventArgs &a);
