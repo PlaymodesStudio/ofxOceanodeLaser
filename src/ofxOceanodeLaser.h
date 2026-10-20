@@ -8,87 +8,22 @@
 #ifndef ofxOceanodeLaser_h
 #define ofxOceanodeLaser_h
 
-#include "ildaController.h"
-#include "ildaProjector.h"
-#include "ildaShape.h"
-#include "laserSimulator.h"
-#include "polyOscSender.h"
-#include "ofxOceanodeOSCController.h"
+// Declarations only: the node headers and the bodies live in ofxOceanodeLaser.cpp, so
+// including this header does not compile every node of the addon again.
 
-#include "ofxOceanode.h"
+#include <memory>
 
-class ildaDebugger : public ofxOceanodeNodeModel {
-public:
-    ildaDebugger(shared_ptr<ildaController> iController) : controller(iController), ofxOceanodeNodeModel("ILDA Debugger"){}
-    
-    std::string macroMixerBlocker() const override { return "Reads shared laser hardware state. Keep ILDA Debugger outside MacroMixer."; }
-
-    void setup(){
-        addParameter(x.set("x", {0}, {0}, {1}));
-        addParameter(y.set("y", {0}, {0}, {1}));
-        addParameter(r.set("r", {0}, {0}, {255}));
-        addParameter(g.set("g", {0}, {0}, {255}));
-        addParameter(b.set("b", {0}, {0}, {255}));
-        addParameter(size.set("Size", {0},{0},{10000}));
-    }
-    
-    void update(ofEventArgs &a){
-        vector<ofxLaser::Point> points = controller->getAllLaserPoints();
-        vector<float> tempX(points.size());
-        vector<float> tempY(points.size());
-        vector<float> tempR(points.size());
-        vector<float> tempG(points.size());
-        vector<float> tempB(points.size());
-        
-        for(int i = 0; i < points.size(); i++){
-            tempX[i] = points[i].x / 800.0f;
-            tempY[i] = points[i].y / 800.0f;
-            tempR[i] = points[i].r;
-            tempG[i] = points[i].g;
-            tempB[i] = points[i].b;
-        }
-  
-        x = tempX;
-        y = tempY;
-        r = tempR;
-        g = tempG;
-        b = tempB;
-        size = x.get().size();
-    }
-
-private:
-    shared_ptr<ildaController> controller;
-    
-    ofParameter<vector<float>> x;
-    ofParameter<vector<float>> y;
-    ofParameter<vector<float>> r;
-    ofParameter<vector<float>> g;
-    ofParameter<vector<float>> b;
-    ofParameter<float> size;
-};
+class ofxOceanode;
+class ildaController;
 
 namespace ofxOceanodeLaser{
-static void registerModels(ofxOceanode &o, shared_ptr<ildaController> ildaController){
-    o.registerModel<ildaProjector>("ILDA", ildaController);
-    o.registerModel<ildaShape>("ILDA", ildaController);
-    o.registerModel<laserSimulator>("ILDA", ildaController);
-    o.registerModel<polyOscSender>("ILDA", o.getController<ofxOceanodeOSCController>());
-    o.registerModel<ildaDebugger>("ILDA", ildaController);
-}
-static void registerType(ofxOceanode &o){
-    
-}
-static void registerScope(ofxOceanode &o){
-    
-}
-static shared_ptr<ildaController> addController(ofxOceanode &o){
-    return o.addController<ildaController>();
-}
-static void registerCollection(ofxOceanode &o){
-    registerModels(o, ofxOceanodeLaser::addController(o));
-    registerType(o);
-    registerScope(o);
-}
+
+void registerModels(ofxOceanode &o, std::shared_ptr<ildaController> ildaController);
+void registerType(ofxOceanode &o);
+void registerScope(ofxOceanode &o);
+std::shared_ptr<ildaController> addController(ofxOceanode &o);
+void registerCollection(ofxOceanode &o);
+
 }
 
 #endif /* ofxOceanodeLaser_h */
