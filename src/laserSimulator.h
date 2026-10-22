@@ -109,6 +109,14 @@ public:
     void presetWillBeLoaded() override { disableUpdate = true; }
     void presetHasLoaded()    override { disableUpdate = false; }
 
+    // The view buttons are not parameters, so the preset stores the chosen view.
+    void presetSave(ofJson& json) override { json["ViewMode"] = viewMode; }
+    void presetRecallAfterSettingParameters(ofJson& json) override {
+        // Presets saved before ViewMode existed open in the perspective view.
+        auto it = json.find("ViewMode");
+        viewMode = (it != json.end() && it->is_number_integer() && it->get<int>() == 1) ? 1 : 0;
+    }
+
     // ------------------------------------------------------------------
     // update() — rebuild geometry from the shared simulator buffer.
     // We always rebuild when the buffer is non-empty (live laser data
