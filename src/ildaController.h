@@ -12,6 +12,7 @@
 #include "imgui.h"
 #include "ofxLaserManager.h"
 #include "ofxFatLine.h"
+#include "ildaMaskField.h"
 
 class ildaController : public ofxOceanodeBaseController{
 public:
@@ -524,9 +525,13 @@ public:
     // (and renders nothing when no shapes publish this frame).
     // -------------------------------------------------------------------
     void publishLaserShape(const ofxFatLine& fat, const vector<ofColor>& colors) {
-        for (int i = 0; i < (int)fat.size(); i++) {
-            simulatorWriteBuffer.push_back(fat.getVertices()[i].x / 800.0f);
-            simulatorWriteBuffer.push_back(fat.getVertices()[i].y / 800.0f);
+        publishLaserShape(fat.getVertices(), colors);
+    }
+
+    void publishLaserShape(const vector<glm::vec3>& vertices, const vector<ofColor>& colors) {
+        for (int i = 0; i < (int)vertices.size(); i++) {
+            simulatorWriteBuffer.push_back(vertices[i].x / 800.0f);
+            simulatorWriteBuffer.push_back(vertices[i].y / 800.0f);
             simulatorWriteBuffer.push_back(colors[i].r / 255.0f);
             simulatorWriteBuffer.push_back(colors[i].g / 255.0f);
             simulatorWriteBuffer.push_back(colors[i].b / 255.0f);
@@ -548,6 +553,28 @@ public:
     }
     
     bool isFrozen(){return freeze;};
+
+    // ILDA Mask nodes register their field here; every ILDA Shape multiplies its
+    // colours by the product of all of them.
+    void addMask(const ildaMasking::Field* field){
+        if(std::find(masks.begin(), masks.end(), field) == masks.end()) masks.push_back(field);
+    }
+
+    void removeMask(const ildaMasking::Field* field){
+        masks.erase(std::remove(masks.begin(), masks.end(), field), masks.end());
+    }
+
+    bool hasActiveMask() const {
+        return std::any_of(masks.begin(), masks.end(), [](const ildaMasking::Field* field){ return !field->isIdentity(); });
+    }
+
+    float sampleMask(float u, float v) const {
+        float value = 1.0f;
+        for(const ildaMasking::Field* field : masks){
+            if(!field->isIdentity()) value *= field->sample(u, v);
+        }
+        return value;
+    }
     
     ofEvent<float> newValue;
 private:
@@ -594,6 +621,8 @@ private:
 
     vector<glm::vec2> warpPoints;
     int pointDraggingIndex;
+
+    vector<const ildaMasking::Field*> masks;
 };
 
 
