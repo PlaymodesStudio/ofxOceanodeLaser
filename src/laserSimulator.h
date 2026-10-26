@@ -90,7 +90,7 @@ public:
 		addParameter(showWindow.set("Show", true));
 
 		// --- Output ---
-		addParameter(textureOut.set("Texture", nullptr, nullptr, nullptr));
+		addOutputParameter(textureOut.set("Texture", nullptr, nullptr, nullptr));
 
 		// --- Rendering --- (inspector-only)
 		//addInspectorParameter(renderLikeUnity.set("RenderLikeUnity", true));

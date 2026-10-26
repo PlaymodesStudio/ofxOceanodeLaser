@@ -11,7 +11,7 @@ public:
         addParameter(width.set("Width", 100, 1, 10000));
         addParameter(height.set("Height", 100, 1, 10000));
         addParameter(fatline.set("Fatline", {ofxFatLine()}));
-        addParameter(output.set("Output", {0}, {0}, {1}));
+        addOutputParameter(output.set("Output", {0}, {0}, {1}));
         
         listener = fatline.newListener([this](vector<ofxFatLine> &vfl){
             int size = 0;

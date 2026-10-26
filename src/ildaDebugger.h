@@ -18,12 +18,12 @@ public:
     std::string macroMixerBlocker() const override { return "Reads shared laser hardware state. Keep ILDA Debugger outside MacroMixer."; }
 
     void setup(){
-        addParameter(x.set("x", {0}, {0}, {1}));
-        addParameter(y.set("y", {0}, {0}, {1}));
-        addParameter(r.set("r", {0}, {0}, {255}));
-        addParameter(g.set("g", {0}, {0}, {255}));
-        addParameter(b.set("b", {0}, {0}, {255}));
-        addParameter(size.set("Size", {0},{0},{10000}));
+        addOutputParameter(x.set("x", {0}, {0}, {1}));
+        addOutputParameter(y.set("y", {0}, {0}, {1}));
+        addOutputParameter(r.set("r", {0}, {0}, {255}));
+        addOutputParameter(g.set("g", {0}, {0}, {255}));
+        addOutputParameter(b.set("b", {0}, {0}, {255}));
+        addOutputParameter(size.set("Size", {0},{0},{10000}));
     }
     
     void update(ofEventArgs &a){
