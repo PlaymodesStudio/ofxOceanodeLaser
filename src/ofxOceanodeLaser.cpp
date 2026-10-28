@@ -21,8 +21,8 @@ namespace ofxOceanodeLaser{
 void registerModels(ofxOceanode &o, std::shared_ptr<ildaController> ildaController){
     o.registerModel<ildaProjector>("ILDA", ildaController);
     o.registerModel<ildaShape>("ILDA", ildaController);
-    o.registerModel<ildaMask>("ILDA", ildaController);
-    o.registerModel<laserSimulator>("ILDA", ildaController);
+    o.registerModel<ildaMask>("ILDA", ofxOceanodeNodeRegistrationFlags::Sink, ildaController);
+    o.registerModel<laserSimulator>("ILDA", ofxOceanodeNodeRegistrationFlags::Sink, ildaController);
     o.registerModel<polyOscSender>("ILDA", o.getController<ofxOceanodeOSCController>());
     o.registerModel<ildaDebugger>("ILDA", ildaController);
 }
