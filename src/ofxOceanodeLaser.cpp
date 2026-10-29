@@ -24,7 +24,7 @@ void registerModels(ofxOceanode &o, std::shared_ptr<ildaController> ildaControll
     o.registerModel<ildaMask>("ILDA", ofxOceanodeNodeRegistrationFlags::Sink, ildaController);
     o.registerModel<laserSimulator>("ILDA", ofxOceanodeNodeRegistrationFlags::Sink, ildaController);
     o.registerModel<polyOscSender>("ILDA", o.getController<ofxOceanodeOSCController>());
-    o.registerModel<ildaDebugger>("ILDA", ildaController);
+    o.registerModel<ildaDebugger>("ILDA", ofxOceanodeNodeRegistrationFlags::Sink, ildaController);
 }
 void registerType(ofxOceanode &o){
     
