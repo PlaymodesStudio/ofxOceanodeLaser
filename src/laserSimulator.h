@@ -118,13 +118,12 @@ public:
     }
 
     // ------------------------------------------------------------------
-    // update() — rebuild geometry from the shared simulator buffer.
-    // We always rebuild when the buffer is non-empty (live laser data
-    // changes every frame); when it IS empty we still call renderToFbo()
-    // so the gizmos (floor grid, axes) continue to show.
+    // update() — rebuild geometry from the shared simulator buffer while shown.
+    // Show=false pauses all simulation/rendering and holds the last texture.
+    // While shown, even an empty buffer is rendered so gizmos remain visible.
     // ------------------------------------------------------------------
     void update(ofEventArgs& /*args*/) override {
-        if (disableUpdate) return;
+        if (disableUpdate || !showWindow) return;
         const vector<float>& data = controller->getSimulatorData();
 
         // Compute debug counts from the buffer
@@ -158,7 +157,7 @@ public:
 
     // ------------------------------------------------------------------
     // draw() — called by Oceanode inside the main ImGui frame.
-    // Opens a standalone floating window when "Show Window" is true.
+    // Opens a standalone floating window when "Show" is true.
     // Left drag orbits; Shift+drag / right / middle drag pans; wheel zooms.
     // ------------------------------------------------------------------
     void draw(ofEventArgs& /*args*/) override {
@@ -245,7 +244,7 @@ public:
             if (viewMode == 1 && drawReferenceGrid) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const ImVec2 end(position.x + sz, position.y + sz);
-                const ImU32 gridColor = IM_COL32(255, 0, 0, 64);
+                const ImU32 gridColor = IM_COL32(64, 64, 64, 255);
                 dl->PushClipRect(position, end, true);
                 for (int i = 0; i <= 4; ++i) {
                     const float offset = sz * (float)i / 4.0f;
@@ -646,7 +645,7 @@ private:
     void drawFloorGrid() const {
         const int N = 5;   // 5 lines per axis → 4 cells
 
-        ofSetColor(60, 60, 80, 200);
+        ofSetColor(64, 64, 64, 255);
         ofSetLineWidth(1.0f);
 
         if (!sphericalProjection) {
