@@ -120,10 +120,14 @@ public:
     // ------------------------------------------------------------------
     // update() — rebuild geometry from the shared simulator buffer while shown.
     // Show=false pauses all simulation/rendering and holds the last texture.
-    // While shown, even an empty buffer is rendered so gizmos remain visible.
+    // So does a shown window nobody can see (collapsed, or a docked tab behind
+    // another) unless the Texture output is connected: rebuilding the dot
+    // cylinders and rendering the multisampled FBO is the node's whole cost.
+    // While visible, even an empty buffer is rendered so gizmos remain visible.
     // ------------------------------------------------------------------
     void update(ofEventArgs& /*args*/) override {
         if (disableUpdate || !showWindow) return;
+        if (!windowVisible && !getOceanodeParameter(textureOut).hasOutConnections()) return;
         const vector<float>& data = controller->getSimulatorData();
 
         // Compute debug counts from the buffer
@@ -161,15 +165,19 @@ public:
     // Left drag orbits; Shift+drag / right / middle drag pans; wheel zooms.
     // ------------------------------------------------------------------
     void draw(ofEventArgs& /*args*/) override {
+        windowVisible = false;
         if (!fbo.isAllocated()) return;
         if (!showWindow)        return;
 
         ImGui::SetNextWindowSize(ImVec2(600, 660), ImGuiCond_FirstUseEver);
         bool windowOpen = showWindow.get();
-        if (ImGui::Begin("Laser Simulator##laserSimWin",
+        // Begin is false while the window is collapsed or a hidden docked tab;
+        // the next update then skips the rebuild and render.
+        windowVisible = ImGui::Begin("Laser Simulator##laserSimWin",
                          &windowOpen,
                          ImGuiWindowFlags_NoFocusOnAppearing
-                         | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+                         | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        if (windowVisible) {
 
             // ---- View mode buttons (perspective / top) ------------------
             // Highlight the active button with a tinted colour.
@@ -948,6 +956,7 @@ private:
 
     // Polish / guard state
     bool   disableUpdate = false;
+    bool   windowVisible = false;  // last draw()'s ImGui::Begin result
 
     // Debug counts (computed in update, displayed in draw overlay)
     int debugVertexCount = 0;
