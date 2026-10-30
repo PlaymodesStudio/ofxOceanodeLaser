@@ -19,6 +19,7 @@ public:
     std::string macroMixerBlocker() const override { return "Reads shared laser hardware state. Keep ILDA Debugger outside MacroMixer."; }
 
     void setup(){
+        addParameter(on.set("On?", true));
         addOutputParameter(x.set("x", {0}, {0}, {1}));
         addOutputParameter(y.set("y", {0}, {0}, {1}));
         addOutputParameter(r.set("r", {0}, {0}, {255}));
@@ -28,6 +29,8 @@ public:
     }
 
     void update(ofEventArgs &a){
+        if(!on.get()) return;
+
         // Read each laser's point buffer where it lives: no concatenated copy
         // of ofxLaser::Point objects, and the scratch vectors keep their
         // capacity from frame to frame, so a frame allocates nothing.
@@ -64,6 +67,7 @@ public:
 private:
     shared_ptr<ildaController> controller;
 
+    ofParameter<bool> on;
     ofParameter<vector<float>> x;
     ofParameter<vector<float>> y;
     ofParameter<vector<float>> r;
