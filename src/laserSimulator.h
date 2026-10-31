@@ -249,12 +249,13 @@ public:
                 ImVec2(position.x + sz, position.y + sz), ImVec2(0, 1), ImVec2(1, 0));
 
             // Flat-view reference overlay: four cells per axis, crossing at the origin.
+            // Only the interior lines are drawn so the image border stays black.
             if (viewMode == 1 && drawReferenceGrid) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 const ImVec2 end(position.x + sz, position.y + sz);
                 const ImU32 gridColor = IM_COL32(64, 64, 64, 255);
                 dl->PushClipRect(position, end, true);
-                for (int i = 0; i <= 4; ++i) {
+                for (int i = 1; i < 4; ++i) {
                     const float offset = sz * (float)i / 4.0f;
                     dl->AddLine(ImVec2(position.x + offset, position.y),
                         ImVec2(position.x + offset, end.y), gridColor, 1.0f);
@@ -784,6 +785,21 @@ private:
             }
 
             easyCam.end();
+
+            // The flat view frames the frustum exactly, so the frustum
+            // outline, the outer grid lines and MSAA bleed all land on the
+            // image edge. Paint the edge black so the border stays clean.
+            ofDisableDepthTest();
+            ofFill();
+            ofSetColor(0, 0, 0, 255);
+            const float edge = 2.0f;
+            const float size = (float)currentFboSize;
+            ofDrawRectangle(0.0f, 0.0f, size, edge);
+            ofDrawRectangle(0.0f, size - edge, size, edge);
+            ofDrawRectangle(0.0f, 0.0f, edge, size);
+            ofDrawRectangle(size - edge, 0.0f, edge, size);
+            ofEnableDepthTest();
+
             // Restore perspective cam orbit for next perspective frame
             updatePerspectiveCamera();
         } else {
