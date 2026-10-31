@@ -118,16 +118,16 @@ public:
     }
 
     // ------------------------------------------------------------------
-    // update() — rebuild geometry from the shared simulator buffer while shown.
-    // Show=false pauses all simulation/rendering and holds the last texture.
-    // So does a shown window nobody can see (collapsed, or a docked tab behind
-    // another) unless the Texture output is connected: rebuilding the dot
-    // cylinders and rendering the multisampled FBO is the node's whole cost.
+    // update() — render while the window is visible or the texture is in use.
+    // Show controls only the simulator window. Cables and visible Custom GUI
+    // views keep Texture live independently. Otherwise hold the last texture:
+    // rebuilding dot cylinders and rendering the FBO is the node's whole cost.
     // While visible, even an empty buffer is rendered so gizmos remain visible.
     // ------------------------------------------------------------------
     void update(ofEventArgs& /*args*/) override {
-        if (disableUpdate || !showWindow) return;
-        if (!windowVisible && !getOceanodeParameter(textureOut).hasOutConnections()) return;
+        if (disableUpdate) return;
+        auto& output = getOceanodeParameter(textureOut);
+        if (!(showWindow && windowVisible) && !output.hasOutConnections() && !output.wasUsedByView()) return;
         const vector<float>& data = controller->getSimulatorData();
 
         // Compute debug counts from the buffer
@@ -172,7 +172,7 @@ public:
         ImGui::SetNextWindowSize(ImVec2(600, 660), ImGuiCond_FirstUseEver);
         bool windowOpen = showWindow.get();
         // Begin is false while the window is collapsed or a hidden docked tab;
-        // the next update then skips the rebuild and render.
+        // the next update can pause unless a cable or another view needs Texture.
         windowVisible = ImGui::Begin("Laser Simulator##laserSimWin",
                          &windowOpen,
                          ImGuiWindowFlags_NoFocusOnAppearing
