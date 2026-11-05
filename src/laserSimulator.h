@@ -392,6 +392,13 @@ private:
                             std::min(0.52f * b, 1.0f)); // Unity _Alpha=0.52
     }
 
+    // Flat view uses raw RGB with a single 0.8 blend factor, leaving
+    // headroom for additive overlaps. Perspective keeps its brightness model.
+    ofFloatColor floorColor(const ofFloatColor& c) const {
+        if (viewMode == 1) return ofFloatColor(c.r, c.g, c.b, 0.8f);
+        return renderLikeUnity ? applyBrightness(c) : c;
+    }
+
     // ------------------------------------------------------------------
     // Add a cylinder from `origin` to `proj`, capped with a disc at proj.
     // Used for single isolated laser dots.
@@ -558,7 +565,7 @@ private:
                 float p0X = data[idx + 0] * 2.0f - 1.0f;
                 float p0Y = data[idx + 1] * 2.0f - 1.0f;
                 ofFloatColor raw(data[idx+2], data[idx+3], data[idx+4], 1.0f);
-                ofFloatColor col = lu ? applyBrightness(raw) : raw;
+                ofFloatColor col = floorColor(raw);
 
                 float angX = p0X * aX + ox;
                 float angY = p0Y * aY + oy;
@@ -583,7 +590,7 @@ private:
                     float p1X = data[idx + STRIDE + 0] * 2.0f - 1.0f;
                     float p1Y = data[idx + STRIDE + 1] * 2.0f - 1.0f;
                     ofFloatColor raw1(data[idx+STRIDE+2],data[idx+STRIDE+3],data[idx+STRIDE+4],1.0f);
-                    ofFloatColor col1 = lu ? applyBrightness(raw1) : raw1;
+                    ofFloatColor col1 = floorColor(raw1);
 
                     float a1X = p1X * aX + ox;
                     float a1Y = p1Y * aY + oy;
