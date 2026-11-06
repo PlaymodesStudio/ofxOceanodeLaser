@@ -243,7 +243,13 @@ public:
 
 			ImGui::SameLine();
 			ImGui::AlignTextToFramePadding();
-			ImGui::Text("Verts: %d  |  Shapes: %d  |  Dots: %d", debugVertexCount, debugShapeCount, debugDotCount);
+			// Points: all laser output points (ILDA only). Verts/Shapes/Dots: what is drawn.
+			if (dataSource == DataIlda) {
+				ImGui::Text("Points: %d  |  Verts: %d  |  Shapes: %d  |  Dots: %d",
+				            debugPointCount, debugVertexCount, debugShapeCount, debugDotCount);
+			} else {
+				ImGui::Text("Verts: %d  |  Shapes: %d  |  Dots: %d", debugVertexCount, debugShapeCount, debugDotCount);
+			}
 
             ImGui::SameLine();
             ImGui::TextDisabled("(?)");
@@ -366,6 +372,7 @@ private:
 
     void rebuildSelectedLaserData() {
         selectedLaserData.clear();
+        debugPointCount = 0;
         if(dataSource == DataApp) {
             // The shapes as ILDA Shape nodes send them, before ofxLaser: every
             // zone and laser together, with no warping, path sampling or dot
@@ -385,6 +392,9 @@ private:
         // Overlay outputs in the shared projection; input-zone tile offsets
         // are routing coordinates, not physical projector positions.
         const vector<ofxLaser::Point> points = controller->getLaserPoints(index);
+        // Every output point, blanks and repeats included: equals ILDA
+        // Debugger's Size when both nodes select the same laser (or All).
+        debugPointCount += static_cast<int>(points.size());
         bool shapeOpen = false;
         for(const auto &point : points) {
             const bool lit = std::max(point.r, std::max(point.g, point.b)) > 0.0f;
@@ -1108,6 +1118,7 @@ private:
     bool   windowVisible = false;  // last draw()'s ImGui::Begin result
 
     // Debug counts (computed in update, displayed in draw overlay)
+    int debugPointCount  = 0;  // ILDA: every output point read, before filtering
     int debugVertexCount = 0;
     int debugShapeCount  = 0;
     int debugDotCount    = 0;

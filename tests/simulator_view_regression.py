@@ -75,7 +75,7 @@ struct Controller {
 };
 struct Simulator {
     bool disableUpdate = false, showWindow = false, windowVisible = false;
-    int textureOut = 0, debugVertexCount = 0, debugShapeCount = 0, debugDotCount = 0;
+    int textureOut = 0, debugPointCount = 0, debugVertexCount = 0, debugShapeCount = 0, debugDotCount = 0;
     static constexpr int STRIDE = 5;
     Output output;
     std::shared_ptr<Controller> controller = std::make_shared<Controller>();
@@ -146,6 +146,7 @@ int main() {
     s.update(args);
     assert(s.renders == 6 && s.controller->reads == 6);
     assert(s.debugVertexCount == 3 && s.debugShapeCount == 2 && s.debugDotCount == 1);
+    assert(s.debugPointCount == 4); // every output point, blanks included
     assert(s.renderedData.size() == 17);
     assert(s.renderedData[0] == 0.5f && s.renderedData[1] == 1.0f);
     assert(s.renderedData[2] == 1.0f && s.renderedData[3] == 128.0f / 255.0f);
@@ -159,6 +160,7 @@ int main() {
                                 {0,0,0,255,0}, {80,0,0,255,0}, {80,0,0,0,255}, {160,0,0,255,0}};
     s.update(args);
     assert(s.debugVertexCount == 4 && s.debugShapeCount == 2 && s.debugDotCount == 1);
+    assert(s.debugPointCount == 8); // repeats and blanks still count as points
     assert(s.renderedData.size() == 22 && s.renderedData[5] == -1.0f);
     assert(s.renderedData[0] == 0.5f && s.renderedData[2] == 1.0f && s.renderedData[3] == 64.0f / 255.0f);
     assert(s.renderedData[11] == 0.1f && s.renderedData[14] == 1.0f && s.renderedData[15] == 1.0f);
@@ -172,6 +174,7 @@ int main() {
     s.laserIndex.value = 2;
     s.update(args);
     assert(s.controller->reads == 10 && s.debugShapeCount == 2 && s.debugDotCount == 2);
+    assert(s.debugPointCount == 2); // All Lasers sums every laser, like ILDA Debugger
     assert(s.renderedData.size() == 12 && s.renderedData[5] == -1 && s.renderedData[11] == -1);
     assert(s.renderedData[0] == 0.1f && s.renderedData[6] == 0.8f);
     ofJson allPreset;
@@ -222,6 +225,7 @@ int main() {
     s.update(args);
     assert(s.renderedData == s.controller->appData && s.controller->reads == reads);
     assert(s.debugVertexCount == 3 && s.debugShapeCount == 2 && s.debugDotCount == 1);
+    assert(s.debugPointCount == 0); // App reads no laser points
     ofJson appPreset;
     s.presetSave(appPreset);
     assert(appPreset["DataSource"] == "App");
@@ -250,7 +254,7 @@ int main() {
                         "-fsanitize=address,undefined", "-I", str(ROOT.parent.parent / "libs/json/include"),
                         str(source), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=10)
-    print("Simulator regression passed: view demand, single/all projectors, boundaries, blanking, dots and repeated points, ILDA/App data, preset recall, list changes, empty data.")
+    print("Simulator regression passed: view demand, single/all projectors, boundaries, blanking, dots and repeated points, point counts, ILDA/App data, preset recall, list changes, empty data.")
 
 
 if __name__ == "__main__":
