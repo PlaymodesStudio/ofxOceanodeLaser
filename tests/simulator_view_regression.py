@@ -25,8 +25,13 @@ def main():
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <limits>
+#include <string>
 #include <vector>
+#include <nlohmann/json.hpp>
 using std::vector;
+using std::string;
+using ofJson = nlohmann::json;
 uint64_t frame = 0;
 uint64_t ofGetFrameNum() { return frame; }
 struct Output {
@@ -45,13 +50,27 @@ float ofClamp(float value, float low, float high) { return std::clamp(value, low
 struct Selection {
     int value = 0;
     int get() { return value; }
+    void setMin(int) {}
+    void setMax(int) {}
+    void setWithoutEventNotifications(int v) { value = v; }
+};
+struct Dropdown {
+    vector<string> names;
+    void setDropdownOptions(const vector<string>& options) { names = options; }
 };
 struct Controller {
     vector<ofxLaser::Point> data, secondLaser;
+    vector<float> appData;
+    const vector<float>& getSimulatorData() const { return appData; }
+    vector<string> names = {"Laser 1", "Laser 2"};
+    uint64_t revision = 0;
     int reads = 0;
+    uint64_t getLasersRevision() { return revision; }
+    vector<string> getLaserNames() { return names; }
     vector<ofxLaser::Point> getLaserPoints(int index) {
         ++reads;
-        return index == 0 ? data : secondLaser;
+        assert(index >= 0 && index < static_cast<int>(names.size()));
+        return index == 0 ? data : index == 1 ? secondLaser : vector<ofxLaser::Point>{};
     }
 };
 struct Simulator {
@@ -61,13 +80,21 @@ struct Simulator {
     Output output;
     std::shared_ptr<Controller> controller = std::make_shared<Controller>();
     Selection laserIndex;
+    std::shared_ptr<Dropdown> laserDropdown = std::make_shared<Dropdown>();
+    int availableLaserCount = -1, viewMode = 0;
+    enum DataSource { DataIlda = 0, DataApp = 1 };
+    int dataSource = DataIlda;
+    uint64_t knownLasersRevision = std::numeric_limits<uint64_t>::max();
     vector<float> selectedLaserData, renderedData;
     int rebuilds = 0, renders = 0;
     Output& getOceanodeParameter(int) { return output; }
-    void refreshLasers() {}
+    REFRESH_LASERS
     void rebuildGeometry(const vector<float>& data) { ++rebuilds; renderedData = data; }
     void renderToFbo() { ++renders; }
     REBUILD_DATA
+    APPEND_DATA
+    SAVE_PRESET
+    RECALL_PRESET
     UPDATE
 };
 int main() {
@@ -75,6 +102,8 @@ int main() {
     ofEventArgs args;
     s.update(args);
     assert(s.renders == 0); // frame zero must not imply view demand
+    assert(s.laserIndex.get() == 0); // default selection is still the first projector
+    assert(s.laserDropdown->names == vector<string>({"Laser 1", "Laser 2", "All Lasers"}));
     s.controller->data = {{0,0,255,255,255}};
     s.output.markUsedByView(); // visible Custom GUI, no cable, Show off
     ++frame;
@@ -121,9 +150,87 @@ int main() {
     assert(s.renderedData[0] == 0.5f && s.renderedData[1] == 1.0f);
     assert(s.renderedData[2] == 1.0f && s.renderedData[3] == 128.0f / 255.0f);
     assert(s.renderedData[10] == -1.0f && s.renderedData.back() == -1.0f);
+    // ofxLaser writes a dot as repeated identical points (dotMaxPoints), the
+    // last one possibly dimmer: it must stay a one-point run with the brightest
+    // colour, or it renders as zero-length segments, i.e. nothing. Repeats
+    // inside a line (corner dwell) merge without splitting the run.
+    s.controller->secondLaser = {{400,400,255,0,0}, {400,400,255,0,0}, {400,400,128,64,0},
+                                {0,0,0,0,0},
+                                {0,0,0,255,0}, {80,0,0,255,0}, {80,0,0,0,255}, {160,0,0,255,0}};
+    s.update(args);
+    assert(s.debugVertexCount == 4 && s.debugShapeCount == 2 && s.debugDotCount == 1);
+    assert(s.renderedData.size() == 22 && s.renderedData[5] == -1.0f);
+    assert(s.renderedData[0] == 0.5f && s.renderedData[2] == 1.0f && s.renderedData[3] == 64.0f / 255.0f);
+    assert(s.renderedData[11] == 0.1f && s.renderedData[14] == 1.0f && s.renderedData[15] == 1.0f);
     s.controller->secondLaser = {{100,100,0,0,0}};
     s.update(args);
-    assert(s.renders == 7 && s.renderedData.empty());
+    assert(s.renders == 8 && s.renderedData.empty());
+    // Both final projector outputs share the projection plane. Each projector
+    // ends with a separator even if its final point is lit.
+    s.controller->data = {{80,160,255,0,0}};
+    s.controller->secondLaser = {{640,720,0,255,0}};
+    s.laserIndex.value = 2;
+    s.update(args);
+    assert(s.controller->reads == 10 && s.debugShapeCount == 2 && s.debugDotCount == 2);
+    assert(s.renderedData.size() == 12 && s.renderedData[5] == -1 && s.renderedData[11] == -1);
+    assert(s.renderedData[0] == 0.1f && s.renderedData[6] == 0.8f);
+    ofJson allPreset;
+    s.presetSave(allPreset);
+    assert(allPreset["SimulateAllLasers"].get<bool>());
+    // The appended All entry follows additions/deletions instead of turning
+    // into a particular projector when the list changes.
+    s.controller->names.push_back("Laser 3");
+    ++s.controller->revision;
+    s.update(args);
+    assert(s.laserIndex.get() == 3 && s.controller->reads == 13);
+    assert(s.debugShapeCount == 2); // empty third projector introduces no phantom shape
+    // Recall All saved with two projectors while three are configured.
+    s.laserIndex.value = 2;
+    s.presetRecallAfterSettingParameters(allPreset);
+    assert(s.laserIndex.get() == 3);
+    // Legacy presets keep individual indices, and an invalid old index must
+    // clamp to a projector rather than inadvertently selecting All.
+    ofJson legacy = ofJson::object();
+    s.laserIndex.value = 1;
+    s.presetRecallAfterSettingParameters(legacy);
+    assert(s.laserIndex.get() == 1);
+    s.laserIndex.value = 3;
+    s.presetRecallAfterSettingParameters(legacy);
+    assert(s.laserIndex.get() == 2);
+    // Deleting the selected last projector also clamps to a remaining one.
+    s.controller->names.pop_back();
+    ++s.controller->revision;
+    s.refreshLasers();
+    assert(s.laserIndex.get() == 1);
+    s.laserIndex.value = 2; // All with two projectors
+    s.controller->names.resize(1);
+    ++s.controller->revision;
+    s.update(args);
+    assert(s.laserIndex.get() == 1 && s.debugShapeCount == 1);
+    s.controller->names.clear();
+    ++s.controller->revision;
+    const int reads = s.controller->reads;
+    s.update(args);
+    assert(s.laserIndex.get() == 0 && s.renderedData.empty() && s.controller->reads == reads);
+    // App shows the shapes ILDA Shape nodes publish, before ofxLaser, without
+    // reading any laser; ILDA, the default, shows the selected laser's points.
+    ofJson ildaPreset;
+    s.presetSave(ildaPreset);
+    assert(ildaPreset["DataSource"] == "ILDA");
+    s.dataSource = Simulator::DataApp;
+    s.controller->appData = {0.5f,0.5f,1,0,0,-1, 0.1f,0.2f,0,1,0, 0.3f,0.4f,0,1,0,-1};
+    s.update(args);
+    assert(s.renderedData == s.controller->appData && s.controller->reads == reads);
+    assert(s.debugVertexCount == 3 && s.debugShapeCount == 2 && s.debugDotCount == 1);
+    ofJson appPreset;
+    s.presetSave(appPreset);
+    assert(appPreset["DataSource"] == "App");
+    s.presetRecallAfterSettingParameters(ildaPreset);
+    assert(s.dataSource == Simulator::DataIlda);
+    s.presetRecallAfterSettingParameters(appPreset);
+    assert(s.dataSource == Simulator::DataApp);
+    s.presetRecallAfterSettingParameters(legacy); // presets from before Data open on ILDA
+    assert(s.dataSource == Simulator::DataIlda);
     frame = 0;
     assert(!s.output.wasUsedByView()); // no underflow if frame counter resets
 }
@@ -132,13 +239,18 @@ int main() {
     code = code.replace("USED_VIEW", method(parameter, "bool wasUsedByView("))
     code = code.replace("UPDATE", method(simulator, "void update(ofEventArgs&"))
     code = code.replace("REBUILD_DATA", method(simulator, "void rebuildSelectedLaserData("))
+    code = code.replace("APPEND_DATA", method(simulator, "void appendLaserData("))
+    code = code.replace("REFRESH_LASERS", method(simulator, "void refreshLasers("))
+    code = code.replace("SAVE_PRESET", method(simulator, "void presetSave("))
+    code = code.replace("RECALL_PRESET", method(simulator, "void presetRecallAfterSettingParameters("))
     with tempfile.TemporaryDirectory(prefix="laser-view-") as directory:
         source, binary = Path(directory) / "test.cpp", Path(directory) / "test"
         source.write_text(code)
         subprocess.run(["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
-                        "-fsanitize=address,undefined", str(source), "-o", str(binary)], check=True)
+                        "-fsanitize=address,undefined", "-I", str(ROOT.parent.parent / "libs/json/include"),
+                        str(source), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=10)
-    print("Simulator regression passed: view demand, preset guard, projector selection, blanking, normalization, empty data.")
+    print("Simulator regression passed: view demand, single/all projectors, boundaries, blanking, dots and repeated points, ILDA/App data, preset recall, list changes, empty data.")
 
 
 if __name__ == "__main__":

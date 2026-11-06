@@ -2,13 +2,16 @@
 //  laserSimulator.h
 //  ofxOceanodeLaser
 //
-//  Renders a real-time 3D simulation of the selected configured projector's
+//  Renders a real-time 3D simulation of one or all configured projectors'
 //  final laser points, inside an ImGui window with a dynamic FBO.
 //  The FBO starts at 1024x1024 and is reallocated to the smallest of
 //  the ImGui window's content width/height whenever the window is resized.
 //
-//  The simulator reads the selected Laser's post-routing/post-warp points and
-//  converts lit runs to [x, y, r, g, b, ..., -1] geometry each frame.
+//  The window's Data selector picks what is drawn:
+//    - ILDA (default): the selected Laser's post-routing/post-warp points,
+//      converted from lit runs to [x, y, r, g, b, ..., -1] geometry each frame.
+//    - App: the [x, y, r, g, b, ..., -1] buffer ILDA Shape nodes publish via
+//      controller->publishLaserShape(), i.e. the shapes before ofxLaser.
 //
 //  World convention:
 //    - Floor  = XY plane (Z = 0)
@@ -43,7 +46,9 @@ public:
     // ------------------------------------------------------------------
     void setup() override
 	{
-		laserDropdown = addParameterDropdown(laserIndex, "Laser", 0, controller->getLaserNames());
+        auto laserNames = controller->getLaserNames();
+        laserNames.push_back("All Lasers");
+		laserDropdown = addParameterDropdown(laserIndex, "Laser", 0, laserNames);
 
 		// --- Projection --- (inspector-only: keeps the node GUI clean)
 		addInspectorParameter(nearWidth.set("Near Width", 0.0f, 0.0f, 2.0f));
@@ -112,11 +117,28 @@ public:
     void presetHasLoaded()    override { disableUpdate = false; }
 
     // The view buttons are not parameters, so the preset stores the chosen view.
-    void presetSave(ofJson& json) override { json["ViewMode"] = viewMode; }
+    void presetSave(ofJson& json) override {
+        json["ViewMode"] = viewMode;
+        json["DataSource"] = dataSource == DataApp ? "App" : "ILDA";
+        // The All entry follows the projectors; persist its meaning even if
+        // the number of configured projectors changes before the next recall.
+        json["SimulateAllLasers"] = laserIndex.get() == availableLaserCount;
+    }
     void presetRecallAfterSettingParameters(ofJson& json) override {
         // Presets saved before ViewMode existed open in the perspective view.
         auto it = json.find("ViewMode");
         viewMode = (it != json.end() && it->is_number_integer() && it->get<int>() == 1) ? 1 : 0;
+        // Presets saved before the Data selector existed show ILDA data.
+        auto source = json.find("DataSource");
+        dataSource = (source != json.end() && source->is_string() && source->get<string>() == "App")
+                   ? DataApp : DataIlda;
+        refreshLasers();
+        auto all = json.find("SimulateAllLasers");
+        if(all != json.end() && all->is_boolean() && all->get<bool>()) {
+            laserIndex.setWithoutEventNotifications(availableLaserCount);
+        } else if(availableLaserCount > 0 && laserIndex.get() >= availableLaserCount) {
+            laserIndex.setWithoutEventNotifications(availableLaserCount - 1);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -185,38 +207,49 @@ public:
                          | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         if (windowVisible) {
 
-            // ---- View mode buttons (perspective / top) ------------------
-            // Highlight the active button with a tinted colour.
-            ImVec4 activeCol  = OceanodeColors::SelectedNodeText;
-			ImVec4 normalCol  = ImGui::ColorConvertU32ToFloat4(ImGui::GetColorU32(ImGuiCol_Button));
-			
-            ImGui::PushStyleColor(ImGuiCol_Button,
-                viewMode == 0 ? activeCol : normalCol);
-            if (ImGui::SmallButton("[^]")) viewMode = 0;   // Perspective
-            ImGui::PopStyleColor();
+            // ---- Toolbar: view, data source, grid, counts ---------------
+            // Combos and the checkbox are all frame-height widgets, so the row
+            // stays level; the text items are aligned to the same frame padding.
+            const float comboWidth = ImGui::CalcTextSize("ILDA").x + ImGui::GetFrameHeight() * 2.0f;
 
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button,
-                viewMode == 1 ? activeCol : normalCol);
-            if (ImGui::SmallButton("[||]")) viewMode = 1;   // Top / flat
-            ImGui::PopStyleColor();
-
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button,
-                drawReferenceGrid ? activeCol : normalCol);
-            if (ImGui::SmallButton("[Grid]")) drawReferenceGrid = !drawReferenceGrid;
-            ImGui::PopStyleColor();
-			
-			ImGui::SameLine();
-			char buf[256];
-			snprintf(buf, sizeof(buf), "Verts: %d  |  Shapes: %d  |  Dots: %d",debugVertexCount, debugShapeCount, debugDotCount);
-			ImGui::Text(buf);
-
-            ImGui::SameLine();
-            ImGui::SmallButton("[?]");
+            // View: 3D = perspective orbit (viewMode 0), 2D = top / flat (1).
+            static const char* viewModeNames[] = {"3D", "2D"};
+            ImGui::SetNextItemWidth(comboWidth);
+            ImGui::Combo("##View", &viewMode, viewModeNames, IM_ARRAYSIZE(viewModeNames));
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
-                ImGui::TextUnformatted("Perspective view:\nDrag: orbit\nShift+drag / right / middle: pan\nWheel: zoom");
+                ImGui::TextUnformatted("3D: perspective view\n2D: top / flat view");
+                ImGui::EndTooltip();
+            }
+
+            ImGui::SameLine();
+            static const char* dataSourceNames[] = {"ILDA", "App"};
+            ImGui::SetNextItemWidth(comboWidth);
+            ImGui::Combo("##Data", &dataSource, dataSourceNames, IM_ARRAYSIZE(dataSourceNames));
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("ILDA: the selected Laser's final points from ofxLaser\n"
+                                       "(zones, warping, path sampling, dot dwell).\n"
+                                       "App: the shapes ILDA Shape nodes send, before ofxLaser,\n"
+                                       "all zones together. Laser selection does not apply.");
+                ImGui::EndTooltip();
+            }
+
+            // The reference grid is a 2D-view overlay.
+            ImGui::SameLine();
+            ImGui::BeginDisabled(viewMode != 1);
+            ImGui::Checkbox("Grid", &drawReferenceGrid);
+            ImGui::EndDisabled();
+
+			ImGui::SameLine();
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text("Verts: %d  |  Shapes: %d  |  Dots: %d", debugVertexCount, debugShapeCount, debugDotCount);
+
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("3D view:\nDrag: orbit\nShift+drag / right / middle: pan\nWheel: zoom");
                 ImGui::EndTooltip();
             }
 
@@ -315,19 +348,43 @@ private:
 
     void refreshLasers() {
         if(knownLasersRevision == controller->getLasersRevision()) return;
+        const bool wasAll = availableLaserCount >= 0 && laserIndex.get() == availableLaserCount;
         knownLasersRevision = controller->getLasersRevision();
         auto names = controller->getLaserNames();
-        if(names.empty()) names.push_back("No lasers");
+        availableLaserCount = static_cast<int>(names.size());
+        // Append rather than prepend so existing preset indices stay valid.
+        names.push_back("All Lasers");
         laserDropdown->setDropdownOptions(names);
         laserIndex.setMin(0);
-        laserIndex.setMax(std::max(0, static_cast<int>(names.size()) - 1));
-        if(laserIndex.get() > laserIndex.getMax())
-            laserIndex.setWithoutEventNotifications(laserIndex.getMax());
+        laserIndex.setMax(availableLaserCount);
+        if(wasAll) {
+            laserIndex.setWithoutEventNotifications(availableLaserCount);
+        } else if(laserIndex.get() >= availableLaserCount) {
+            laserIndex.setWithoutEventNotifications(std::max(0, availableLaserCount - 1));
+        }
     }
 
     void rebuildSelectedLaserData() {
         selectedLaserData.clear();
-        const vector<ofxLaser::Point> points = controller->getLaserPoints(laserIndex.get());
+        if(dataSource == DataApp) {
+            // The shapes as ILDA Shape nodes send them, before ofxLaser: every
+            // zone and laser together, with no warping, path sampling or dot
+            // dwell. The Laser selection does not apply.
+            selectedLaserData = controller->getSimulatorData();
+            return;
+        }
+        if(laserIndex.get() == availableLaserCount) {
+            for(int index = 0; index < availableLaserCount; ++index) appendLaserData(index);
+        } else {
+            appendLaserData(laserIndex.get());
+        }
+    }
+
+    void appendLaserData(int index) {
+        // Final projector points already include zone routing and warping.
+        // Overlay outputs in the shared projection; input-zone tile offsets
+        // are routing coordinates, not physical projector positions.
+        const vector<ofxLaser::Point> points = controller->getLaserPoints(index);
         bool shapeOpen = false;
         for(const auto &point : points) {
             const bool lit = std::max(point.r, std::max(point.g, point.b)) > 0.0f;
@@ -338,13 +395,31 @@ private:
                 }
                 continue;
             }
-            selectedLaserData.push_back(point.x / 800.0f);
-            selectedLaserData.push_back(point.y / 800.0f);
-            selectedLaserData.push_back(ofClamp(point.r / 255.0f, 0.0f, 1.0f));
-            selectedLaserData.push_back(ofClamp(point.g / 255.0f, 0.0f, 1.0f));
-            selectedLaserData.push_back(ofClamp(point.b / 255.0f, 0.0f, 1.0f));
+            const float x = point.x / 800.0f, y = point.y / 800.0f;
+            const float r = ofClamp(point.r / 255.0f, 0.0f, 1.0f);
+            const float g = ofClamp(point.g / 255.0f, 0.0f, 1.0f);
+            const float b = ofClamp(point.b / 255.0f, 0.0f, 1.0f);
+            // ofxLaser holds the beam still by repeating a position: a dot is
+            // dotMaxPoints identical points, and corners dwell. Merge repeats,
+            // keeping the brightest colour, so a dot stays a one-point run and
+            // draws as a disc instead of zero-length segments that draw nothing.
+            if(shapeOpen) {
+                float *previous = &selectedLaserData[selectedLaserData.size() - STRIDE];
+                if(previous[0] == x && previous[1] == y) {
+                    previous[2] = std::max(previous[2], r);
+                    previous[3] = std::max(previous[3], g);
+                    previous[4] = std::max(previous[4], b);
+                    continue;
+                }
+            }
+            selectedLaserData.push_back(x);
+            selectedLaserData.push_back(y);
+            selectedLaserData.push_back(r);
+            selectedLaserData.push_back(g);
+            selectedLaserData.push_back(b);
             shapeOpen = true;
         }
+        // Always terminate the projector's last run before appending another.
         if(shapeOpen) selectedLaserData.push_back(-1.0f);
     }
 
@@ -964,6 +1039,7 @@ private:
     shared_ptr<ofxOceanodeParameter<int>> laserDropdown;
     ofParameter<int> laserIndex;
     uint64_t knownLasersRevision = std::numeric_limits<uint64_t>::max();
+    int availableLaserCount = -1; // the appended All Lasers option uses this index
     vector<float> selectedLaserData;
 
     ofFbo      fbo;
@@ -975,6 +1051,11 @@ private:
     // View mode: 0 = Perspective (easyCam orbit), 1 = Top orthographic
     int        viewMode = 0;
     bool       drawReferenceGrid = false;
+
+    // Data shown: ILDA = the selected Laser's final points (default),
+    // App = the shapes ILDA Shape nodes publish before ofxLaser.
+    enum DataSource { DataIlda = 0, DataApp = 1 };
+    int        dataSource = DataIlda;
 
     // Parameters — projection
     ofParameter<bool>  sphericalProjection;
