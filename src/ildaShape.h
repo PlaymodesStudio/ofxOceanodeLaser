@@ -78,6 +78,19 @@ public:
                         // Mask in the shape's local canvas before routing into a zone.
                         ofPolyline routedPoly(vertices);
                         routedPoly.setClosed(fat.isClosed());
+                        // A shape that ends on its start point is a loop: send it
+                        // closed, without the repeated point. ofxLaser ends each run
+                        // 0.1% short of its end, which left an open loop with a
+                        // visible gap just before its start point. A closed loop's
+                        // last run is the short closing segment, so the shortfall
+                        // vanishes.
+                        auto &routedVertices = routedPoly.getVertices();
+                        if (!routedPoly.isClosed() && routedVertices.size() > 3 &&
+                            glm::distance(routedVertices.front(), routedVertices.back()) < 0.001f) {
+                            if (colors.size() == routedVertices.size()) colors.pop_back();
+                            routedVertices.pop_back();
+                            routedPoly.setClosed(true);
+                        }
                         const glm::vec2 zoneOffset = controller->getZoneOffset(selectedZoneId);
                         for(auto &vertex : routedPoly.getVertices()){
                             vertex.x += zoneOffset.x;

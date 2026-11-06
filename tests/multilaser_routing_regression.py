@@ -138,6 +138,22 @@ int main() {
     s.input(dot);
     assert(manager.wasDot && near(manager.vertices[0].x,100));
     assert(manager.colors[0].r==127); // preserve premultiplied RGB; no second alpha multiplication
+    // An open shape ending on its start point reaches the laser closed, without
+    // the repeated point: ofxLaser stops open paths 0.1% short of their end.
+    vector<ofxFatLine> loop={ofxFatLine({{100,100,0},{300,100,0},{300,300,0},{100,100,0}},
+                                        {{1,0,0},{0,1,0},{0,0,1},{1,0,0}})};
+    s.input(loop);
+    assert(manager.closed && manager.vertices.size()==3 && manager.colors.size()==3);
+    assert(near(manager.vertices[2].x,300) && near(manager.vertices[2].y,300) && manager.colors[2].b==255);
+    assert(loop[0].getVertices().size()==4 && !loop[0].isClosed()); // upstream input untouched
+    // Genuinely open paths, and out-and-back lines, stay open and complete.
+    vector<ofxFatLine> open={ofxFatLine({{100,100,0},{300,100,0},{300,300,0},{100,120,0}},
+                                        {{1,1,1},{1,1,1},{1,1,1},{1,1,1}})};
+    s.input(open);
+    assert(!manager.closed && manager.vertices.size()==4 && manager.colors.size()==4);
+    vector<ofxFatLine> back={ofxFatLine({{100,100,0},{300,100,0},{100,100,0}},{{1,1,1},{1,1,1},{1,1,1}})};
+    s.input(back);
+    assert(!manager.closed && manager.vertices.size()==3);
     const int draws=manager.draws;
     s.disable=true; s.input(line); assert(manager.draws==draws);
     s.disable=false; s.sendBlackShapes=false; s.blackThreshold=0.9f;
@@ -154,7 +170,7 @@ int main() {
                         "-I", str(ROOT / "src"), "-I", str(OF_ROOT / "libs/glm/include"),
                         str(source), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=10)
-    print("Multilaser routing regression passed: masks, zones, clipping state, freeze, preset guard, threshold, alpha.")
+    print("Multilaser routing regression passed: masks, zones, clipping state, freeze, preset guard, threshold, alpha, loops sent closed.")
 
 
 if __name__ == "__main__":
