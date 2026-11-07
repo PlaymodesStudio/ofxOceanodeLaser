@@ -82,6 +82,7 @@ struct Simulator {
     Selection laserIndex;
     std::shared_ptr<Dropdown> laserDropdown = std::make_shared<Dropdown>();
     int availableLaserCount = -1, viewMode = 0;
+    bool drawReferenceGrid = false;
     enum DataSource { DataIlda = 0, DataApp = 1 };
     int dataSource = DataIlda;
     uint64_t knownLasersRevision = std::numeric_limits<uint64_t>::max();
@@ -235,6 +236,36 @@ int main() {
     assert(s.dataSource == Simulator::DataApp);
     s.presetRecallAfterSettingParameters(legacy); // presets from before Data open on ILDA
     assert(s.dataSource == Simulator::DataIlda);
+    // Every toolbar combination must survive a serialized preset round trip,
+    // including a remembered grid preference while the view is 3D.
+    for (int view = 0; view < 2; ++view) {
+        for (int source = 0; source < 2; ++source) {
+            for (bool grid : {false, true}) {
+                s.viewMode = view;
+                s.dataSource = source;
+                s.drawReferenceGrid = grid;
+                ofJson saved;
+                s.presetSave(saved);
+                assert(saved["ViewMode"] == view && saved["ReferenceGrid"] == grid);
+                Simulator restored;
+                ofJson recalled = ofJson::parse(saved.dump());
+                restored.presetRecallAfterSettingParameters(recalled);
+                assert(restored.viewMode == view && restored.dataSource == source);
+                assert(restored.drawReferenceGrid == grid);
+            }
+        }
+    }
+    // Old presets and malformed toolbar values reset to 3D / ILDA / grid off,
+    // even if the previous preset had different choices.
+    for (ofJson oldOrInvalid : {legacy, ofJson{{"ViewMode", "2D"},
+            {"DataSource", 1}, {"ReferenceGrid", "true"}},
+            ofJson{{"ViewMode", 42}, {"DataSource", "Unknown"}, {"ReferenceGrid", nullptr}}}) {
+        s.viewMode = 1;
+        s.dataSource = Simulator::DataApp;
+        s.drawReferenceGrid = true;
+        s.presetRecallAfterSettingParameters(oldOrInvalid);
+        assert(s.viewMode == 0 && s.dataSource == Simulator::DataIlda && !s.drawReferenceGrid);
+    }
     frame = 0;
     assert(!s.output.wasUsedByView()); // no underflow if frame counter resets
 }
@@ -254,7 +285,7 @@ int main() {
                         "-fsanitize=address,undefined", "-I", str(ROOT.parent.parent / "libs/json/include"),
                         str(source), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True, timeout=10)
-    print("Simulator regression passed: view demand, single/all projectors, boundaries, blanking, dots and repeated points, point counts, ILDA/App data, preset recall, list changes, empty data.")
+    print("Simulator regression passed: view demand, single/all projectors, boundaries, blanking, dots and repeated points, point counts, ILDA/App data, toolbar preset round trips, legacy defaults, list changes, empty data.")
 
 
 if __name__ == "__main__":

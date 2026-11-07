@@ -116,10 +116,11 @@ public:
     void presetWillBeLoaded() override { disableUpdate = true; }
     void presetHasLoaded()    override { disableUpdate = false; }
 
-    // The view buttons are not parameters, so the preset stores the chosen view.
+    // Toolbar controls are not parameters, so save their state explicitly.
     void presetSave(ofJson& json) override {
         json["ViewMode"] = viewMode;
         json["DataSource"] = dataSource == DataApp ? "App" : "ILDA";
+        json["ReferenceGrid"] = drawReferenceGrid;
         // The All entry follows the projectors; persist its meaning even if
         // the number of configured projectors changes before the next recall.
         json["SimulateAllLasers"] = laserIndex.get() == availableLaserCount;
@@ -132,6 +133,9 @@ public:
         auto source = json.find("DataSource");
         dataSource = (source != json.end() && source->is_string() && source->get<string>() == "App")
                    ? DataApp : DataIlda;
+        // The toolbar's 2D reference grid is separate from the inspector's 3D Grid.
+        auto grid = json.find("ReferenceGrid");
+        drawReferenceGrid = grid != json.end() && grid->is_boolean() && grid->get<bool>();
         refreshLasers();
         auto all = json.find("SimulateAllLasers");
         if(all != json.end() && all->is_boolean() && all->get<bool>()) {
